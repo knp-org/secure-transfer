@@ -144,10 +144,10 @@ pub async fn download_files(
     };
     protocol::write_frame(&mut tls_stream, &conn_req).await?;
 
-    let pull_req = DownloadRequest {
+    let download_req = DownloadRequest {
         paths: selected_paths.clone(),
     };
-    protocol::write_frame(&mut tls_stream, &pull_req).await?;
+    protocol::write_frame(&mut tls_stream, &download_req).await?;
 
     // Receive manifest
     let manifest: TransferManifest = protocol::read_frame(&mut tls_stream).await?;
@@ -254,7 +254,7 @@ pub async fn download_files(
 
     overall_pb.finish_with_message("[ok] Download complete");
 
-    // Log successful pull
+    // Log successful download
     let _ = history::append_record(&TransactionRecord {
         timestamp: history::now_timestamp(),
         peer_name: addr.to_string(),

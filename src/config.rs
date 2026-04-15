@@ -10,11 +10,11 @@ const DEFAULT_PORT: u16 = 9876;
 /// Access scope for a trusted peer — what operations they can perform
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AccessScope {
-    /// Authorized to only send files (drops if they attempt to Browse/Pull)
+    /// Authorized to only send files (drops if they attempt to Browse/Download)
     PushOnly,
-    /// Authorized to Pull from explicit `share` dirs
+    /// Authorized to Download from explicit `share` dirs
     SharedReadOnly,
-    /// Authorized for Push/Browse/Pull across unconstrained file trees
+    /// Authorized for Push/Browse/Download across unconstrained file trees
     FullAccess,
 }
 

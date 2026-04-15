@@ -468,13 +468,13 @@ async fn handle_download(
     peer_fingerprint: &str,
 ) -> Result<()> {
     // Read the download request
-    let pull_req: DownloadRequest = protocol::read_frame(&mut tls_stream).await?;
+    let download_req: DownloadRequest = protocol::read_frame(&mut tls_stream).await?;
 
-    info!("📥 Download request for {} path(s)", pull_req.paths.len());
+    info!("📥 Download request for {} path(s)", download_req.paths.len());
 
     // Validate and collect entries
     let mut entries = Vec::new();
-    for req_path in &pull_req.paths {
+    for req_path in &download_req.paths {
         let path = PathBuf::from(req_path);
 
         // Security: validate path is within shared dirs (unless unrestricted)
