@@ -683,36 +683,36 @@ pub fn prompt_access_grant(
     println!("  {}", style("|-----------------------------------------------|").yellow());
     println!("  {}  {}                            {}",
         style("|").yellow(),
-        style("1. Accept once").white(),
+        style("1. Allow this request only").white(),
         style("|").yellow()
     );
     println!("  {}  {}   {}",
         style("|").yellow(),
-        style("2. Always accept sends from this device").white(),
+        style("2. Trust this device for file sends").white(),
         style("|").yellow()
     );
     println!("  {}  {}{}",
         style("|").yellow(),
-        style("3. Always accept sends AND full file access").white(),
+        style("3. Trust this device with full access").white(),
         style("  |").yellow()
     );
     println!("  {}  {}                                  {}",
         style("|").yellow(),
-        style("4. Deny").red(),
+        style("4. Deny access").red(),
         style("|").yellow()
     );
     println!("  {}", style("+-----------------------------------------------+").yellow());
     println!();
 
     let items = vec![
-        "Accept once",
-        "Always accept sends from this device",
-        "Always accept sends AND full file access",
-        "Deny",
+        "Allow this request only",
+        "Trust this device for file sends",
+        "Trust this device with full access",
+        "Deny access",
     ];
 
     let selection = Select::new()
-        .with_prompt("  Choose access level")
+        .with_prompt("  Select an access policy")
         .items(&items)
         .default(0)
         .interact()
@@ -750,13 +750,13 @@ pub fn prompt_access_grant(
     };
 
     if decision.granted {
-        println!("  {}  Access granted: {} ({})",
+        println!("  {}  Access approved: {} ({})",
             style("[ok]").green().bold(),
             style(format!("{}", decision.scope)).green(),
             style(format!("{}", decision.duration)).dim()
         );
     } else {
-        println!("  {}  Access denied",
+        println!("  {}  Access request denied",
             style("[!!]").red().bold()
         );
     }
