@@ -12,8 +12,8 @@ use crate::config::{self, AccessDuration, AccessScope, TrustedPeer};
 use crate::crypto::certs;
 use crate::history::{self, TransactionRecord};
 use crate::transfer::protocol::{
-    self, Ack, AckStatus, ConnectionRequest, FileHeader, RequestType, TransferManifest,
-    TransferSummary, CHUNK_SIZE,
+    self, Ack, AckStatus, CHUNK_SIZE, ConnectionRequest, FileHeader, RequestType, TransferManifest,
+    TransferSummary,
 };
 use crate::ui;
 
@@ -56,9 +56,7 @@ fn collect_entries(paths: &[PathBuf]) -> Result<Vec<TransferEntry>> {
                 size,
             });
         } else if path.is_dir() {
-            let base_parent = path
-                .parent()
-                .unwrap_or(&path);
+            let base_parent = path.parent().unwrap_or(&path);
 
             for entry in WalkDir::new(&path).sort_by_file_name() {
                 let entry = entry.with_context(|| "Failed to walk directory")?;
@@ -70,11 +68,7 @@ fn collect_entries(paths: &[PathBuf]) -> Result<Vec<TransferEntry>> {
                     .to_string();
 
                 let is_dir = entry_path.is_dir();
-                let size = if is_dir {
-                    0
-                } else {
-                    entry.metadata()?.len()
-                };
+                let size = if is_dir { 0 } else { entry.metadata()?.len() };
 
                 entries.push(TransferEntry {
                     absolute_path: entry_path.to_path_buf(),
@@ -150,8 +144,8 @@ pub async fn send_files(
 
         // Fail closed: if we cannot extract the server certificate we must not
         // proceed — silently skipping would allow a connection with no trust anchor.
-        let server_fp = server_fp
-            .context("Could not extract server certificate after TLS handshake")?;
+        let server_fp =
+            server_fp.context("Could not extract server certificate after TLS handshake")?;
 
         let app_config = config::AppConfig::load().unwrap_or_default();
         if !app_config.is_trusted(&server_fp) {

@@ -164,7 +164,8 @@ where
     W: AsyncWriteExt + Unpin,
     T: Serialize,
 {
-    let json = serde_json::to_vec(value).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let json =
+        serde_json::to_vec(value).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     let len = json.len() as u32;
     writer.write_all(&len.to_be_bytes()).await?;
     writer.write_all(&json).await?;

@@ -13,20 +13,22 @@ use crate::config::{self, AccessDuration, AccessScope, TrustedPeer};
 use crate::crypto::certs;
 use crate::history::{self, TransactionRecord};
 use crate::transfer::protocol::{
-    self, Ack, AckStatus, BrowseEntry, BrowseRequest, BrowseResponse, ConnectionRequest,
-    DownloadRequest, FileHeader, RequestType, TransferManifest, TransferSummary, CHUNK_SIZE,
+    self, Ack, AckStatus, BrowseEntry, BrowseRequest, BrowseResponse, CHUNK_SIZE,
+    ConnectionRequest, DownloadRequest, FileHeader, RequestType, TransferManifest, TransferSummary,
 };
 use crate::ui;
 
 /// Start the receiver, listening for incoming file transfers and browse requests
-pub async fn listen(port: u16, save_dir: PathBuf, share_dirs: Vec<PathBuf>, unrestricted: bool) -> Result<()> {
+pub async fn listen(
+    port: u16,
+    save_dir: PathBuf,
+    share_dirs: Vec<PathBuf>,
+    unrestricted: bool,
+) -> Result<()> {
     // Ensure save directory exists
-    tokio::fs::create_dir_all(&save_dir).await.with_context(|| {
-        format!(
-            "Failed to create save directory: {}",
-            save_dir.display()
-        )
-    })?;
+    tokio::fs::create_dir_all(&save_dir)
+        .await
+        .with_context(|| format!("Failed to create save directory: {}", save_dir.display()))?;
 
     // Determine shared directories
     let share_dirs = if share_dirs.is_empty() {
@@ -71,12 +73,16 @@ pub async fn listen(port: u16, save_dir: PathBuf, share_dirs: Vec<PathBuf>, unre
     println!("  |--------------------------------------------------|");
     println!("  |  Name: {:<43} |", device_name);
     println!("  |  Port: {:<42} |", port);
-    println!(
-        "  |  Fingerprint: {}...  |",
-        &local_fp[..36]
-    );
+    println!("  |  Fingerprint: {}...  |", &local_fp[..36]);
     println!("  |  Save to: {:<39} |", truncate_path(&save_dir, 39));
-    println!("  |  Sharing: {:<39} |", if unrestricted { "[!!] ALL directories".to_string() } else { truncate_str(&share_display.join(", "), 39) });
+    println!(
+        "  |  Sharing: {:<39} |",
+        if unrestricted {
+            "[!!] ALL directories".to_string()
+        } else {
+            truncate_str(&share_display.join(", "), 39)
+        }
+    );
     println!("  |  Encryption: X25519MLKEM768 + AES-256-GCM       |");
     println!("  +--------------------------------------------------+");
     println!();
@@ -99,7 +105,15 @@ pub async fn listen(port: u16, save_dir: PathBuf, share_dirs: Vec<PathBuf>, unre
         tokio::spawn(async move {
             match acceptor.accept(tcp_stream).await {
                 Ok(tls_stream) => {
-                    if let Err(e) = handle_connection(tls_stream, &save_dir, &share_dirs, unrestricted, session_trusted).await {
+                    if let Err(e) = handle_connection(
+                        tls_stream,
+                        &save_dir,
+                        &share_dirs,
+                        unrestricted,
+                        session_trusted,
+                    )
+                    .await
+                    {
                         warn!("Connection from {} failed: {}", peer_addr, e);
                     }
                 }
@@ -129,7 +143,11 @@ async fn handle_connection(
     info!(
         "Request from '{}' (fp: {}): {:?}",
         conn_req.hostname,
-        if conn_req.fingerprint.len() > 12 { &conn_req.fingerprint[..12] } else { &conn_req.fingerprint },
+        if conn_req.fingerprint.len() > 12 {
+            &conn_req.fingerprint[..12]
+        } else {
+            &conn_req.fingerprint
+        },
         conn_req.request_type
     );
 
@@ -155,11 +173,8 @@ async fn handle_connection(
 
     if !authorized {
         // Unknown peer or scope exceeded — prompt user
-        let decision = ui::prompt_access_grant(
-            &peer_name,
-            &peer_fingerprint,
-            &conn_req.request_type,
-        )?;
+        let decision =
+            ui::prompt_access_grant(&peer_name, &peer_fingerprint, &conn_req.request_type)?;
 
         if !decision.granted {
             // Log the denied connection
@@ -180,7 +195,10 @@ async fn handle_connection(
                 message: "Access denied by receiver".to_string(),
             };
             protocol::write_frame(&mut tls_stream, &ack).await?;
-            info!("Access denied for '{}' ({:?})", peer_name, conn_req.request_type);
+            info!(
+                "Access denied for '{}' ({:?})",
+                peer_name, conn_req.request_type
+            );
             tls_stream.shutdown().await?;
             return Ok(());
         }
@@ -229,7 +247,16 @@ async fn handle_connection(
     match conn_req.request_type {
         RequestType::Send => handle_send(tls_stream, save_dir, &peer_name, &peer_fingerprint).await,
         RequestType::Browse => handle_browse(tls_stream, share_dirs, effective_unrestricted).await,
-        RequestType::Download => handle_download(tls_stream, share_dirs, effective_unrestricted, &peer_name, &peer_fingerprint).await,
+        RequestType::Download => {
+            handle_download(
+                tls_stream,
+                share_dirs,
+                effective_unrestricted,
+                &peer_name,
+                &peer_fingerprint,
+            )
+            .await
+        }
     }
 }
 
@@ -245,10 +272,7 @@ async fn handle_send(
 
     info!(
         "Incoming transfer from '{}': {} files, {} entries, {} bytes",
-        manifest.sender_hostname,
-        manifest.total_files,
-        manifest.total_entries,
-        manifest.total_size
+        manifest.sender_hostname, manifest.total_files, manifest.total_entries, manifest.total_size
     );
 
     // For trusted persistent peers, skip the transfer confirmation prompt
@@ -327,9 +351,9 @@ async fn handle_send(
         let dest_path = save_dir.join(&header.relative_path);
 
         if header.is_dir {
-            tokio::fs::create_dir_all(&dest_path).await.with_context(|| {
-                format!("Failed to create directory: {}", dest_path.display())
-            })?;
+            tokio::fs::create_dir_all(&dest_path)
+                .await
+                .with_context(|| format!("Failed to create directory: {}", dest_path.display()))?;
             debug!("Created directory: {}", header.relative_path);
             continue;
         }
@@ -340,9 +364,9 @@ async fn handle_send(
         }
 
         // Receive file data
-        let mut file = tokio::fs::File::create(&dest_path).await.with_context(|| {
-            format!("Failed to create file: {}", dest_path.display())
-        })?;
+        let mut file = tokio::fs::File::create(&dest_path)
+            .await
+            .with_context(|| format!("Failed to create file: {}", dest_path.display()))?;
 
         let mut remaining = header.size;
         let mut hasher = protocol::checksum_hasher();
@@ -352,7 +376,10 @@ async fn handle_send(
             let to_read = std::cmp::min(remaining as usize, CHUNK_SIZE);
             let n = tokio::io::AsyncReadExt::read(&mut tls_stream, &mut buf[..to_read]).await?;
             if n == 0 {
-                anyhow::bail!("Connection closed during transfer of '{}'", header.relative_path);
+                anyhow::bail!(
+                    "Connection closed during transfer of '{}'",
+                    header.relative_path
+                );
             }
             tokio::io::AsyncWriteExt::write_all(&mut file, &buf[..n]).await?;
             hasher.update(&buf[..n]);
@@ -515,7 +542,10 @@ async fn handle_download(
     // Read the download request
     let download_req: DownloadRequest = protocol::read_frame(&mut tls_stream).await?;
 
-    info!("📥 Download request for {} path(s)", download_req.paths.len());
+    info!(
+        "📥 Download request for {} path(s)",
+        download_req.paths.len()
+    );
 
     // Validate and collect entries
     let mut entries = Vec::new();
@@ -526,7 +556,10 @@ async fn handle_download(
         if !unrestricted {
             let is_allowed = share_dirs.iter().any(|sd| path.starts_with(sd));
             if !is_allowed {
-                warn!("Download request denied for path outside share: {}", req_path);
+                warn!(
+                    "Download request denied for path outside share: {}",
+                    req_path
+                );
                 continue;
             }
         }
@@ -634,7 +667,10 @@ async fn handle_download(
         status: "Success".to_string(),
     });
 
-    info!("[ok] Download complete: {} files, {} bytes", total_files, total_size);
+    info!(
+        "[ok] Download complete: {} files, {} bytes",
+        total_files, total_size
+    );
     tls_stream.shutdown().await?;
     Ok(())
 }
@@ -665,9 +701,7 @@ fn list_directory(path: &Path) -> Result<Vec<BrowseEntry>> {
     }
 
     // Sort: directories first, then alphabetically
-    entries.sort_by(|a, b| {
-        b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name))
-    });
+    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name)));
 
     Ok(entries)
 }

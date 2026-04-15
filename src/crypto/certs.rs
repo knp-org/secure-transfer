@@ -19,9 +19,10 @@ pub fn generate_self_signed_cert() -> Result<(String, String)> {
         .map(|h| h.to_string_lossy().to_string())
         .unwrap_or_else(|_| "unknown".to_string());
 
-    params
-        .distinguished_name
-        .push(rcgen::DnType::CommonName, format!("secure-transfer-{}", hostname));
+    params.distinguished_name.push(
+        rcgen::DnType::CommonName,
+        format!("secure-transfer-{}", hostname),
+    );
 
     let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
         .context("Failed to generate key pair")?;
@@ -113,9 +114,7 @@ pub fn build_server_config() -> Result<Arc<ServerConfig>> {
         .with_single_cert(certs, key)
         .context("Failed to build TLS server config")?;
 
-    info!(
-        "TLS server configured with quantum-safe key exchange (X25519MLKEM768)"
-    );
+    info!("TLS server configured with quantum-safe key exchange (X25519MLKEM768)");
 
     Ok(Arc::new(config))
 }
@@ -130,12 +129,12 @@ pub fn build_server_config() -> Result<Arc<ServerConfig>> {
 pub fn build_client_config(expected_fingerprint: Option<String>) -> Result<Arc<ClientConfig>> {
     let config = ClientConfig::builder()
         .dangerous()
-        .with_custom_certificate_verifier(Arc::new(TofuCertVerifier { expected_fingerprint }))
+        .with_custom_certificate_verifier(Arc::new(TofuCertVerifier {
+            expected_fingerprint,
+        }))
         .with_no_client_auth();
 
-    info!(
-        "TLS client configured with quantum-safe key exchange (X25519MLKEM768)"
-    );
+    info!("TLS client configured with quantum-safe key exchange (X25519MLKEM768)");
 
     Ok(Arc::new(config))
 }

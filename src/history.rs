@@ -55,8 +55,8 @@ pub fn load_records() -> Result<Vec<TransactionRecord>> {
     }
     let data = fs::read_to_string(&path)
         .with_context(|| format!("Failed to read history: {}", path.display()))?;
-    let records: Vec<TransactionRecord> = serde_json::from_str(&data)
-        .with_context(|| "Failed to parse history file")?;
+    let records: Vec<TransactionRecord> =
+        serde_json::from_str(&data).with_context(|| "Failed to parse history file")?;
     Ok(records)
 }
 

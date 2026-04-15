@@ -11,8 +11,8 @@ use crate::config::{self, AccessDuration, AccessScope, TrustedPeer};
 use crate::crypto::certs;
 use crate::history::{self, TransactionRecord};
 use crate::transfer::protocol::{
-    self, Ack, AckStatus, BrowseRequest, BrowseResponse, ConnectionRequest, FileHeader,
-    DownloadRequest, RequestType, TransferManifest, CHUNK_SIZE,
+    self, Ack, AckStatus, BrowseRequest, BrowseResponse, CHUNK_SIZE, ConnectionRequest,
+    DownloadRequest, FileHeader, RequestType, TransferManifest,
 };
 use crate::ui;
 
@@ -63,8 +63,8 @@ pub async fn download_files(
 
         // Fail closed: if we cannot extract the server certificate we must not
         // proceed — silently skipping would allow a connection with no trust anchor.
-        let server_fp = server_fp
-            .context("Could not extract server certificate after TLS handshake")?;
+        let server_fp =
+            server_fp.context("Could not extract server certificate after TLS handshake")?;
 
         let app_config = config::AppConfig::load().unwrap_or_default();
         if !app_config.is_trusted(&server_fp) {
@@ -185,7 +185,11 @@ pub async fn download_files(
     let server_name = rustls::pki_types::ServerName::try_from("secure-transfer.local")
         .map_err(|e| anyhow::anyhow!("Invalid server name: {}", e))?;
 
-    let pinned_fp = if verified_fingerprint.is_empty() { None } else { Some(verified_fingerprint) };
+    let pinned_fp = if verified_fingerprint.is_empty() {
+        None
+    } else {
+        Some(verified_fingerprint)
+    };
     let connector = TlsConnector::from(certs::build_client_config(pinned_fp)?);
     let mut tls_stream = connector.connect(server_name, tcp_stream).await?;
 

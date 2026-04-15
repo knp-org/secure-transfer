@@ -87,8 +87,8 @@ impl AppConfig {
         if path.exists() {
             let data = fs::read_to_string(&path)
                 .with_context(|| format!("Failed to read config: {}", path.display()))?;
-            let config: AppConfig = serde_json::from_str(&data)
-                .with_context(|| "Failed to parse config file")?;
+            let config: AppConfig =
+                serde_json::from_str(&data).with_context(|| "Failed to parse config file")?;
             Ok(config)
         } else {
             let config = AppConfig::default();
@@ -211,13 +211,11 @@ impl AppConfig {
 
     /// Get the effective device name (custom name or system hostname)
     pub fn effective_device_name(&self) -> String {
-        self.device_name
-            .clone()
-            .unwrap_or_else(|| {
-                hostname::get()
-                    .map(|h| h.to_string_lossy().to_string())
-                    .unwrap_or_else(|_| "unknown".to_string())
-            })
+        self.device_name.clone().unwrap_or_else(|| {
+            hostname::get()
+                .map(|h| h.to_string_lossy().to_string())
+                .unwrap_or_else(|_| "unknown".to_string())
+        })
     }
 }
 
