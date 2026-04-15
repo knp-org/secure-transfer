@@ -1047,7 +1047,7 @@ pub fn prompt_access_grant(
         &[
             CardRow::KeyValue {
                 label: "Device".to_string(),
-                value: peer_name.to_string(),
+                value: format!("{} (self-reported)", peer_name),
                 value_style: CardStyle::Accent,
             },
             CardRow::KeyValue {
@@ -1059,6 +1059,11 @@ pub fn prompt_access_grant(
                 label: "Request".to_string(),
                 value: request_label.to_string(),
                 value_style: CardStyle::Bold,
+            },
+            CardRow::Divider,
+            CardRow::Text {
+                text: "The device name above is claimed by the peer and cannot be verified. Only the ID fingerprint is cryptographically authenticated.".to_string(),
+                style: CardStyle::Dim,
             },
             CardRow::Divider,
             CardRow::Text {

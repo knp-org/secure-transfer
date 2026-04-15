@@ -2,7 +2,8 @@ use anyhow::{Context, Result};
 use rcgen::{CertificateParams, KeyPair};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
-use rustls::{ClientConfig, DigitallySignedStruct, ServerConfig, SignatureScheme};
+use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
+use rustls::{ClientConfig, DigitallySignedStruct, DistinguishedName, ServerConfig, SignatureScheme};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::sync::Arc;
@@ -110,11 +111,11 @@ pub fn build_server_config() -> Result<Arc<ServerConfig>> {
     let key = load_key()?;
 
     let config = ServerConfig::builder()
-        .with_no_client_auth()
+        .with_client_cert_verifier(Arc::new(TofuClientVerifier))
         .with_single_cert(certs, key)
         .context("Failed to build TLS server config")?;
 
-    info!("TLS server configured with quantum-safe key exchange (X25519MLKEM768)");
+    info!("TLS server configured with mutual TLS and quantum-safe key exchange (X25519MLKEM768)");
 
     Ok(Arc::new(config))
 }
@@ -127,14 +128,18 @@ pub fn build_server_config() -> Result<Arc<ServerConfig>> {
 ///
 /// Uses X25519MLKEM768 hybrid key exchange for quantum safety.
 pub fn build_client_config(expected_fingerprint: Option<String>) -> Result<Arc<ClientConfig>> {
+    let client_certs = load_cert()?;
+    let client_key = load_key()?;
+
     let config = ClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(TofuCertVerifier {
             expected_fingerprint,
         }))
-        .with_no_client_auth();
+        .with_client_auth_cert(client_certs, client_key)
+        .context("Failed to configure client certificate")?;
 
-    info!("TLS client configured with quantum-safe key exchange (X25519MLKEM768)");
+    info!("TLS client configured with mutual TLS and quantum-safe key exchange (X25519MLKEM768)");
 
     Ok(Arc::new(config))
 }
@@ -200,6 +205,84 @@ impl ServerCertVerifier for TofuCertVerifier {
         // for prompting the user to confirm the fingerprint before proceeding.
         info!("New peer certificate fingerprint: {}", fingerprint);
         Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        vec![
+            SignatureScheme::ECDSA_NISTP256_SHA256,
+            SignatureScheme::ECDSA_NISTP384_SHA384,
+            SignatureScheme::ED25519,
+            SignatureScheme::RSA_PSS_SHA256,
+            SignatureScheme::RSA_PSS_SHA384,
+            SignatureScheme::RSA_PSS_SHA512,
+            SignatureScheme::RSA_PKCS1_SHA256,
+            SignatureScheme::RSA_PKCS1_SHA384,
+            SignatureScheme::RSA_PKCS1_SHA512,
+        ]
+    }
+}
+
+/// Trust-On-First-Use client certificate verifier (server side of mutual TLS).
+///
+/// Accepts any well-formed client certificate at the TLS layer so the handshake
+/// completes. The receiver then extracts the fingerprint from the verified cert
+/// and applies its own TOFU / trusted-peer logic at the application layer.
+///
+/// This ensures the `ConnectionRequest.fingerprint` field — which is a plain
+/// application-layer claim — can never be used to impersonate a trusted peer:
+/// access decisions are made against the TLS-authenticated fingerprint only.
+#[derive(Debug)]
+struct TofuClientVerifier;
+
+impl ClientCertVerifier for TofuClientVerifier {
+    fn offer_client_auth(&self) -> bool {
+        true
+    }
+
+    fn client_auth_mandatory(&self) -> bool {
+        true
+    }
+
+    fn root_hint_subjects(&self) -> &[DistinguishedName] {
+        &[]
+    }
+
+    fn verify_client_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _now: UnixTime,
+    ) -> Result<ClientCertVerified, rustls::Error> {
+        // Structural validity accepted here; TOFU decision is in handle_connection.
+        Ok(ClientCertVerified::assertion())
     }
 
     fn verify_tls12_signature(

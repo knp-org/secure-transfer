@@ -9,6 +9,10 @@ const MAX_FRAME_SIZE: u32 = 1_048_576;
 /// Chunk size for file data transfer (64KB)
 pub const CHUNK_SIZE: usize = 65_536;
 
+/// Maximum number of entries (files + directories) accepted in a single transfer manifest.
+/// Prevents a malicious sender from exhausting disk space / inodes with millions of entries.
+pub const MAX_TRANSFER_ENTRIES: u64 = 100_000;
+
 // --- Protocol Frame Types ---
 
 /// Transfer manifest — sent first to describe the entire transfer

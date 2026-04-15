@@ -15,6 +15,7 @@ use crate::history::{self, TransactionRecord};
 use crate::transfer::protocol::{
     self, Ack, AckStatus, BrowseEntry, BrowseRequest, BrowseResponse, CHUNK_SIZE,
     ConnectionRequest, DownloadRequest, FileHeader, RequestType, TransferManifest, TransferSummary,
+    MAX_TRANSFER_ENTRIES,
 };
 use crate::ui;
 
@@ -146,7 +147,21 @@ async fn handle_connection(
 
     // ── Access Control Gate ──
     let mut config = config::AppConfig::load().unwrap_or_default();
-    let peer_fingerprint = conn_req.fingerprint.clone();
+
+    // Derive the peer identity from the TLS client certificate — this is
+    // cryptographically authenticated by the mutual-TLS handshake and cannot
+    // be forged. We deliberately ignore conn_req.fingerprint for authorization;
+    // it is an unverified application-layer claim and accepting it would let any
+    // attacker who knows a trusted peer's fingerprint (e.g. from mDNS) impersonate
+    // them and bypass all access prompts.
+    let peer_fingerprint = {
+        let (_, rustls_conn) = tls_stream.get_ref();
+        rustls_conn
+            .peer_certificates()
+            .and_then(|certs| certs.first())
+            .map(|cert| certs::cert_fingerprint(cert.as_ref()))
+            .unwrap_or_default()
+    };
     let peer_name = conn_req.hostname.clone();
 
     // Check persistent config, then fall back to session-level trust.
@@ -268,6 +283,14 @@ async fn handle_send(
         manifest.sender_hostname, manifest.total_files, manifest.total_entries, manifest.total_size
     );
 
+    if manifest.total_entries > MAX_TRANSFER_ENTRIES {
+        anyhow::bail!(
+            "Manifest total_entries {} exceeds limit {}",
+            manifest.total_entries,
+            MAX_TRANSFER_ENTRIES
+        );
+    }
+
     // For trusted persistent peers, skip the transfer confirmation prompt
     let config = config::AppConfig::load().unwrap_or_default();
     let auto_accept = if !peer_fingerprint.is_empty() {
@@ -383,9 +406,17 @@ async fn handle_send(
 
         file.flush().await?;
 
-        // Verify checksum
+        // Verify checksum — reject files that omit it entirely (size > 0 requires a checksum)
         let computed_checksum = protocol::finalize_checksum(hasher);
-        let checksum_ok = header.checksum.is_empty() || computed_checksum == header.checksum;
+        let checksum_ok = if header.size > 0 && header.checksum.is_empty() {
+            warn!(
+                "Sender omitted checksum for non-empty file '{}' — rejecting",
+                header.relative_path
+            );
+            false
+        } else {
+            header.checksum.is_empty() || computed_checksum == header.checksum
+        };
 
         let file_ack = if checksum_ok {
             files_received += 1;
@@ -499,10 +530,10 @@ async fn handle_browse(
         } else {
             let req_path = PathBuf::from(&browse_req.path);
 
-            // Security: validate path is within shared dirs (unless unrestricted)
+            // Security: validate path is within shared dirs (unless unrestricted).
+            // Use canonicalize so symlinks inside a shared dir cannot point outside it.
             if !unrestricted {
-                let is_allowed = share_dirs.iter().any(|sd| req_path.starts_with(sd));
-                if !is_allowed {
+                if !is_within_share_dirs(&req_path, share_dirs).await {
                     let response = BrowseResponse {
                         current_path: browse_req.path,
                         entries: vec![],
@@ -545,10 +576,10 @@ async fn handle_download(
     for req_path in &download_req.paths {
         let path = PathBuf::from(req_path);
 
-        // Security: validate path is within shared dirs (unless unrestricted)
+        // Security: validate path is within shared dirs (unless unrestricted).
+        // Use canonicalize so symlinks inside a shared dir cannot point outside it.
         if !unrestricted {
-            let is_allowed = share_dirs.iter().any(|sd| path.starts_with(sd));
-            if !is_allowed {
+            if !is_within_share_dirs(&path, share_dirs).await {
                 warn!(
                     "Download request denied for path outside share: {}",
                     req_path
@@ -601,6 +632,14 @@ async fn handle_download(
     };
 
     protocol::write_frame(&mut tls_stream, &manifest).await?;
+
+    if manifest.total_entries > MAX_TRANSFER_ENTRIES {
+        anyhow::bail!(
+            "Download manifest total_entries {} exceeds limit {}",
+            manifest.total_entries,
+            MAX_TRANSFER_ENTRIES
+        );
+    }
 
     // Wait for client acceptance
     let ack: Ack = protocol::read_frame(&mut tls_stream).await?;
@@ -716,4 +755,22 @@ fn dirs_home() -> PathBuf {
     directories::UserDirs::new()
         .map(|u| u.home_dir().to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Returns true only if `path` resolves (after following all symlinks) to a
+/// location inside one of `share_dirs`. This prevents symlink-based directory
+/// traversal where a symlink inside a shared directory points outside it.
+async fn is_within_share_dirs(path: &Path, share_dirs: &[PathBuf]) -> bool {
+    let Ok(canonical_path) = tokio::fs::canonicalize(path).await else {
+        return false;
+    };
+    for sd in share_dirs {
+        let Ok(canonical_sd) = tokio::fs::canonicalize(sd).await else {
+            continue;
+        };
+        if canonical_path.starts_with(&canonical_sd) {
+            return true;
+        }
+    }
+    false
 }

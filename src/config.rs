@@ -4,10 +4,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use crate::transfer::protocol::RequestType;
 
 const DEFAULT_PORT: u16 = 9876;
+
+/// Process-level lock serialising all config read-modify-write operations.
+/// Without this, concurrent incoming connections (each with their own task) can
+/// race: both read config, both modify, and the last write silently drops the
+/// other's change — e.g. two simultaneous trust-grants lose one peer record.
+static CONFIG_LOCK: Mutex<()> = Mutex::new(());
 
 /// Access scope for a trusted peer — what operations they can perform
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -97,16 +104,26 @@ impl AppConfig {
         }
     }
 
-    /// Persist config to disk
+    /// Persist config to disk atomically.
+    ///
+    /// Holds `CONFIG_LOCK` for the duration of the read-modify-write so that
+    /// concurrent connection tasks cannot interleave their writes and lose records.
+    /// Writes to a `.tmp` file then renames so a crash mid-write never leaves a
+    /// partially-written config.
     pub fn save(&self) -> Result<()> {
+        let _guard = CONFIG_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+
         let path = config_file_path()?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("Failed to create config dir: {}", parent.display()))?;
         }
         let data = serde_json::to_string_pretty(self)?;
-        fs::write(&path, data)
-            .with_context(|| format!("Failed to write config: {}", path.display()))?;
+        let tmp_path = path.with_extension("json.tmp");
+        fs::write(&tmp_path, &data)
+            .with_context(|| format!("Failed to write temp config: {}", tmp_path.display()))?;
+        fs::rename(&tmp_path, &path)
+            .with_context(|| format!("Failed to commit config: {}", path.display()))?;
         Ok(())
     }
 

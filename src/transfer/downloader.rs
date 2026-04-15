@@ -302,7 +302,16 @@ pub async fn download_files(
         file.flush().await?;
 
         let computed = protocol::finalize_checksum(hasher);
-        let ok = header.checksum.is_empty() || computed == header.checksum;
+        // Reject files that omit the checksum entirely — size > 0 requires integrity verification
+        let ok = if header.size > 0 && header.checksum.is_empty() {
+            warn!(
+                "Server omitted checksum for non-empty file '{}' — rejecting",
+                header.relative_path
+            );
+            false
+        } else {
+            header.checksum.is_empty() || computed == header.checksum
+        };
 
         let file_ack = Ack {
             status: if ok { AckStatus::Ok } else { AckStatus::Error },
