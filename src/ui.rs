@@ -202,6 +202,22 @@ impl TransferProgress {
         }
     }
 
+    /// Show hashing indicator before checksum computation (phase before transfer)
+    pub fn start_hashing(&self, file_name: &str, file_num: u64, file_size: u64) {
+        self.status_pb.set_message(format!(
+            "{}  Hashing file {}/{} {}",
+            style("##").yellow().bold(),
+            style(file_num).yellow().bold(),
+            style(self.total_files).yellow(),
+            style(format!("({})", format_size(file_size))).dim()
+        ));
+        self.file_pb.set_message(format!(
+            "  {} {}",
+            style("~>").yellow(),
+            style(truncate_str(file_name, 60)).white()
+        ));
+    }
+
     /// Update progress when starting a new file
     pub fn start_file(&self, file_name: &str, file_num: u64, file_size: u64) {
         self.status_pb.set_message(format!(

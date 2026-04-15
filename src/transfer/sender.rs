@@ -227,10 +227,11 @@ pub async fn send_files(
 
     // Send each entry
     for entry in &entries {
-        // Compute checksum for files
+        // Compute checksum for files; show hashing indicator so the UI doesn't freeze
         let checksum = if entry.is_dir {
             String::new()
         } else {
+            progress.start_hashing(&entry.relative_path, files_sent + 1, entry.size);
             protocol::compute_file_checksum(&entry.absolute_path).await?
         };
 

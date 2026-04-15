@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use sha2::Digest;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
@@ -704,7 +704,6 @@ fn list_directory(path: &Path) -> Result<Vec<BrowseEntry>> {
 /// Blocks absolute paths, `..` components, and Windows-style prefixes so that
 /// `save_dir.join(relative_path)` can never land outside `save_dir`.
 fn is_safe_relative_path(path: &str) -> bool {
-    use std::path::Component;
     let p = std::path::Path::new(path);
     if p.is_absolute() {
         return false;

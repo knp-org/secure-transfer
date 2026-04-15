@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use sha2::Digest;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Component, PathBuf};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
@@ -355,7 +355,6 @@ pub async fn download_files(
 /// Blocks absolute paths, `..` components, and Windows-style prefixes so that
 /// `save_dir.join(relative_path)` can never land outside `save_dir`.
 fn is_safe_relative_path(path: &str) -> bool {
-    use std::path::Component;
     let p = std::path::Path::new(path);
     if p.is_absolute() {
         return false;

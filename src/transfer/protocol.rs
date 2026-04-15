@@ -196,11 +196,19 @@ where
     serde_json::from_slice(&buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
-/// Compute SHA-256 checksum of a file
+/// Compute SHA-256 checksum of a file using buffered 64KB reads to avoid OOM on large files
 pub async fn compute_file_checksum(path: &std::path::Path) -> io::Result<String> {
-    let data = tokio::fs::read(path).await?;
+    let file = tokio::fs::File::open(path).await?;
+    let mut reader = tokio::io::BufReader::with_capacity(CHUNK_SIZE, file);
     let mut hasher = Sha256::new();
-    hasher.update(&data);
+    let mut buf = vec![0u8; CHUNK_SIZE];
+    loop {
+        let n = reader.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
     Ok(hex::encode(hasher.finalize()))
 }
 

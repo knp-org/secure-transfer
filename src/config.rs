@@ -179,7 +179,7 @@ impl AppConfig {
     /// Scope matrix:
     /// - `SendOnly`       → Send only; Browse and Download are rejected.
     /// - `SharedReadOnly` → Browse and Download only; Send is rejected.
-    ///                      (A read-only peer should not be able to push files.)
+    ///   (A read-only peer should not be able to push files.)
     /// - `FullAccess`     → All request types.
     ///
     /// Used for both persistent-config and session-level checks.

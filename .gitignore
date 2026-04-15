@@ -18,5 +18,3 @@ Thumbs.db
 # Sensitive files
 *.key
 *.pem
-
-.codex/
