@@ -599,6 +599,18 @@ async fn handle_download(
             for entry in WalkDir::new(&path).sort_by_file_name() {
                 let entry = entry?;
                 let entry_path = entry.path().to_path_buf();
+
+                // Validate every individual entry, not just the root.
+                // A symlink inside the shared dir can point to a file outside it;
+                // without this check its contents would be streamed to the client.
+                if !unrestricted && !is_within_share_dirs(&entry_path, share_dirs).await {
+                    warn!(
+                        "Skipping {} — resolves outside share boundaries",
+                        entry_path.display()
+                    );
+                    continue;
+                }
+
                 let relative = entry_path
                     .strip_prefix(path.parent().unwrap_or(&path))
                     .unwrap_or(&entry_path)
