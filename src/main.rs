@@ -15,6 +15,10 @@ use cli::{Cli, Commands, ConfigAction, DevicesAction};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .map_err(|_| anyhow::anyhow!("Failed to install rustls crypto provider"))?;
+
     let cli = Cli::parse();
 
     // Initialize logging
