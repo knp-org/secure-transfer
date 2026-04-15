@@ -70,8 +70,8 @@ pub struct TransferSummary {
 /// The type of request being made on a connection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RequestType {
-    /// Push files to this device (original send flow)
-    Push,
+    /// Send files to this device (original send flow)
+    Send,
     /// Browse remote files
     Browse,
     /// Download specific files from remote

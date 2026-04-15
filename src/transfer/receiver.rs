@@ -112,7 +112,7 @@ async fn handle_connection(
     let conn_req: ConnectionRequest = protocol::read_frame(&mut tls_stream).await?;
 
     let request_type_str = match &conn_req.request_type {
-        RequestType::Push => "Push",
+        RequestType::Send => "Send",
         RequestType::Browse => "Browse",
         RequestType::Download => "Download",
     };
@@ -198,14 +198,14 @@ async fn handle_connection(
     };
 
     match conn_req.request_type {
-        RequestType::Push => handle_push(tls_stream, save_dir, &peer_name, &peer_fingerprint).await,
+        RequestType::Send => handle_send(tls_stream, save_dir, &peer_name, &peer_fingerprint).await,
         RequestType::Browse => handle_browse(tls_stream, share_dirs, effective_unrestricted).await,
         RequestType::Download => handle_download(tls_stream, share_dirs, effective_unrestricted, &peer_name, &peer_fingerprint).await,
     }
 }
 
-/// Handle a push (incoming file transfer) — original flow
-async fn handle_push(
+/// Handle a send (incoming file transfer) — original flow
+async fn handle_send(
     mut tls_stream: tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
     save_dir: &Path,
     peer_name: &str,
@@ -225,7 +225,7 @@ async fn handle_push(
     // For trusted persistent peers, skip the transfer confirmation prompt
     let config = config::AppConfig::load().unwrap_or_default();
     let auto_accept = if !peer_fingerprint.is_empty() {
-        config.is_authorized(peer_fingerprint, "Push")
+        config.is_authorized(peer_fingerprint, "Send")
     } else {
         false
     };
@@ -260,7 +260,7 @@ async fn handle_push(
             timestamp: history::now_timestamp(),
             peer_name: peer_name.to_string(),
             peer_fingerprint: peer_fingerprint.to_string(),
-            action: "Push".to_string(),
+            action: "Send".to_string(),
             target_paths: vec![],
             bytes_transferred: 0,
             status: "Denied".to_string(),
@@ -373,7 +373,7 @@ async fn handle_push(
         timestamp: history::now_timestamp(),
         peer_name: peer_name.to_string(),
         peer_fingerprint: peer_fingerprint.to_string(),
-        action: "Push".to_string(),
+        action: "Send".to_string(),
         target_paths: received_paths,
         bytes_transferred: total_bytes,
         status: "Success".to_string(),

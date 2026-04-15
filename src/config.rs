@@ -11,17 +11,17 @@ const DEFAULT_PORT: u16 = 9876;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AccessScope {
     /// Authorized to only send files (drops if they attempt to Browse/Download)
-    PushOnly,
+    SendOnly,
     /// Authorized to Download from explicit `share` dirs
     SharedReadOnly,
-    /// Authorized for Push/Browse/Download across unconstrained file trees
+    /// Authorized for Send/Browse/Download across unconstrained file trees
     FullAccess,
 }
 
 impl std::fmt::Display for AccessScope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AccessScope::PushOnly => write!(f, "Push Only"),
+            AccessScope::SendOnly => write!(f, "Send Only"),
             AccessScope::SharedReadOnly => write!(f, "Shared Read-Only"),
             AccessScope::FullAccess => write!(f, "Full Access"),
         }
@@ -182,8 +182,8 @@ impl AppConfig {
             }
             match (&peer.scope, request_type) {
                 (AccessScope::FullAccess, _) => true,
-                (AccessScope::PushOnly, "Push") => true,
-                (AccessScope::SharedReadOnly, "Push") => true,
+                (AccessScope::SendOnly, "Send") => true,
+                (AccessScope::SharedReadOnly, "Send") => true,
                 (AccessScope::SharedReadOnly, "Browse") => true,
                 (AccessScope::SharedReadOnly, "Download") => true,
                 _ => false,

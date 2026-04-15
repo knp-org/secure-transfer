@@ -772,9 +772,9 @@ pub fn prompt_access_grant(
         0 => {
             // Accept once — scope matches the current request type
             let scope = match request_type {
-                "Push" => AccessScope::PushOnly,
+                "Send" => AccessScope::SendOnly,
                 "Browse" | "Download" => AccessScope::SharedReadOnly,
-                _ => AccessScope::PushOnly,
+                _ => AccessScope::SendOnly,
             };
             AccessDecision {
                 granted: true,
@@ -784,7 +784,7 @@ pub fn prompt_access_grant(
         }
         1 => AccessDecision {
             granted: true,
-            scope: AccessScope::PushOnly,
+            scope: AccessScope::SendOnly,
             duration: AccessDuration::Persistent,
         },
         2 => AccessDecision {
@@ -794,7 +794,7 @@ pub fn prompt_access_grant(
         },
         _ => AccessDecision {
             granted: false,
-            scope: AccessScope::PushOnly,
+            scope: AccessScope::SendOnly,
             duration: AccessDuration::OneTime,
         },
     };

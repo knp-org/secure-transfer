@@ -10,7 +10,7 @@ pub struct TransactionRecord {
     pub timestamp: String,
     pub peer_name: String,
     pub peer_fingerprint: String,
-    /// "Push", "Download", "Browse", "Connect"
+    /// "Send", "Download", "Browse", "Connect"
     pub action: String,
     pub target_paths: Vec<String>,
     pub bytes_transferred: u64,

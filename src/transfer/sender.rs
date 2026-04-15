@@ -138,7 +138,7 @@ pub async fn send_files(paths: &[PathBuf], addr: SocketAddr) -> Result<()> {
 
     // Send connection handshake with fingerprint
     let conn_req = ConnectionRequest {
-        request_type: RequestType::Push,
+        request_type: RequestType::Send,
         hostname: hostname.clone(),
         fingerprint: local_fingerprint.clone(),
     };
@@ -164,7 +164,7 @@ pub async fn send_files(paths: &[PathBuf], addr: SocketAddr) -> Result<()> {
             timestamp: history::now_timestamp(),
             peer_name: addr.to_string(),
             peer_fingerprint: String::new(),
-            action: "Sent".to_string(),
+            action: "Send".to_string(),
             target_paths: entries.iter().map(|e| e.relative_path.clone()).collect(),
             bytes_transferred: 0,
             status: "Denied".to_string(),
@@ -250,7 +250,7 @@ pub async fn send_files(paths: &[PathBuf], addr: SocketAddr) -> Result<()> {
         timestamp: history::now_timestamp(),
         peer_name: addr.to_string(),
         peer_fingerprint: String::new(),
-        action: "Sent".to_string(),
+        action: "Send".to_string(),
         target_paths: sent_paths,
         bytes_transferred: bytes_sent,
         status: "Success".to_string(),
