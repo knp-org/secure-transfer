@@ -153,6 +153,15 @@ impl AppConfig {
         Ok(false)
     }
 
+    /// Remove all trusted peers
+    /// Returns the number of peers removed
+    pub fn clear_trusted_peers(&mut self) -> Result<usize> {
+        let count = self.trusted_peers.len();
+        self.trusted_peers.clear();
+        self.save()?;
+        Ok(count)
+    }
+
     /// Check if a fingerprint is trusted
     pub fn is_trusted(&self, fingerprint: &str) -> bool {
         self.trusted_peers.contains_key(fingerprint)

@@ -807,6 +807,59 @@ pub fn print_trusted_devices(peers: &[(String, crate::config::TrustedPeer)]) {
     println!();
 }
 
+pub enum RevokeSelection {
+    Device(String),
+    All,
+    Cancel,
+}
+
+/// Prompt the user to select a trusted device to revoke, or revoke all.
+pub fn select_device_to_revoke(
+    peers: &[(String, crate::config::TrustedPeer)],
+) -> std::io::Result<RevokeSelection> {
+    if peers.is_empty() {
+        println!();
+        println!("  {}  {}", style("[info]").cyan().bold(), style("No trusted devices found.").dim());
+        println!();
+        return Ok(RevokeSelection::Cancel);
+    }
+
+    let mut items = vec![format!(
+        "{}  {}",
+        style("[!]").red().bold(),
+        style("Remove access for ALL trusted devices").red()
+    )];
+
+    for (fingerprint, peer) in peers {
+        let fp_short = if fingerprint.len() > 12 {
+            format!("{}...", &fingerprint[..12])
+        } else {
+            fingerprint.clone()
+        };
+
+        items.push(format!(
+            "{}  {}  [{}]  {}",
+            style(">>").cyan(),
+            style(&peer.name).white().bold(),
+            style(fp_short).dim(),
+            style(format!("{}", peer.scope)).yellow()
+        ));
+    }
+
+    let selection = Select::new()
+        .with_prompt("  Select device access to revoke")
+        .items(&items)
+        .default(0)
+        .interact_opt()
+        .map_err(std::io::Error::other)?;
+
+    match selection {
+        None => Ok(RevokeSelection::Cancel),
+        Some(0) => Ok(RevokeSelection::All),
+        Some(idx) => Ok(RevokeSelection::Device(peers[idx - 1].0.clone())),
+    }
+}
+
 /// Print formatted transaction history
 pub fn print_history(records: &[crate::history::TransactionRecord], limit: usize) {
     if records.is_empty() {

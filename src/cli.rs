@@ -97,9 +97,9 @@ pub enum DevicesAction {
     /// List all trusted devices
     List,
 
-    /// Revoke trust for a device (by name or fingerprint)
+    /// Revoke trust for a device (by name/fingerprint), or choose interactively
     Revoke {
         /// Device name or fingerprint (or fingerprint prefix)
-        identifier: String,
+        identifier: Option<String>,
     },
 }

@@ -177,10 +177,38 @@ async fn main() -> Result<()> {
                 }
                 DevicesAction::Revoke { identifier } => {
                     let mut cfg = config::AppConfig::load()?;
-                    if cfg.remove_trusted_peer(&identifier)? {
-                        println!("  [ok] Device '{}' has been revoked", identifier);
+                    if let Some(identifier) = identifier {
+                        if identifier.eq_ignore_ascii_case("all") {
+                            let removed = cfg.clear_trusted_peers()?;
+                            println!("  [ok] Revoked access for {} device(s)", removed);
+                        } else if cfg.remove_trusted_peer(&identifier)? {
+                            println!("  [ok] Device '{}' has been revoked", identifier);
+                        } else {
+                            println!("  [err] No device found matching '{}'", identifier);
+                        }
                     } else {
-                        println!("  [err] No device found matching '{}'", identifier);
+                        let peers: Vec<(String, config::TrustedPeer)> = cfg
+                            .trusted_peers
+                            .iter()
+                            .map(|(fp, peer)| (fp.clone(), peer.clone()))
+                            .collect();
+
+                        ui::print_trusted_devices(&peers);
+
+                        match ui::select_device_to_revoke(&peers)? {
+                            ui::RevokeSelection::Device(fingerprint) => {
+                                if cfg.remove_trusted_peer(&fingerprint)? {
+                                    println!("  [ok] Device access revoked");
+                                }
+                            }
+                            ui::RevokeSelection::All => {
+                                let removed = cfg.clear_trusted_peers()?;
+                                println!("  [ok] Revoked access for {} device(s)", removed);
+                            }
+                            ui::RevokeSelection::Cancel => {
+                                info!("No device selected for revocation, exiting.");
+                            }
+                        }
                     }
                 }
             }
