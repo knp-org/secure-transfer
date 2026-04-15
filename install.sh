@@ -1,9 +1,9 @@
 #!/bin/sh
 # secure-transfer installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/secure-transfer/main/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/knp-org/secure-transfer/main/install.sh | sh
 set -e
 
-REPO="YOUR_USERNAME/secure-transfer"
+REPO="knp-org/secure-transfer"
 BINARY="secure-transfer"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 

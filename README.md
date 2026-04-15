@@ -71,7 +71,7 @@ On first run, the app generates a self-signed TLS certificate stored in `~/.conf
 
 ### One-liner (pre-built binary)
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/secure-transfer/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/knp-org/secure-transfer/main/install.sh | sh
 ```
 
 ### From crates.io
@@ -81,12 +81,12 @@ cargo install secure-transfer
 
 ### From GitHub (source)
 ```bash
-cargo install --git https://github.com/YOUR_USERNAME/secure-transfer
+cargo install --git https://github.com/knp-org/secure-transfer
 ```
 
 ### From Source (local)
 ```bash
-git clone https://github.com/YOUR_USERNAME/secure-transfer.git
+git clone https://github.com/knp-org/secure-transfer.git
 cd secure-transfer
 cargo install --path .
 ```
