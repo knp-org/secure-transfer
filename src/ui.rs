@@ -460,6 +460,58 @@ fn print_card(title: &str, tone: CardTone, preferred_width: usize, rows: &[CardR
     println!();
 }
 
+pub fn print_receiver_banner(
+    device_name: &str,
+    port: u16,
+    fingerprint: &str,
+    save_dir: &str,
+    sharing: &str,
+) {
+    let fingerprint_display = if fingerprint.len() > 16 {
+        format!("{}…", &fingerprint[..16])
+    } else {
+        fingerprint.to_string()
+    };
+
+    print_card(
+        "Quantum-Safe Receiver",
+        CardTone::Cyan,
+        64,
+        &[
+            CardRow::KeyValue {
+                label: "Name".to_string(),
+                value: device_name.to_string(),
+                value_style: CardStyle::Accent,
+            },
+            CardRow::KeyValue {
+                label: "Port".to_string(),
+                value: port.to_string(),
+                value_style: CardStyle::Bold,
+            },
+            CardRow::KeyValue {
+                label: "Fingerprint".to_string(),
+                value: fingerprint_display,
+                value_style: CardStyle::Dim,
+            },
+            CardRow::KeyValue {
+                label: "Save to".to_string(),
+                value: save_dir.to_string(),
+                value_style: CardStyle::Normal,
+            },
+            CardRow::KeyValue {
+                label: "Sharing".to_string(),
+                value: sharing.to_string(),
+                value_style: CardStyle::Normal,
+            },
+            CardRow::KeyValue {
+                label: "Encryption".to_string(),
+                value: "X25519MLKEM768 + AES-256-GCM".to_string(),
+                value_style: CardStyle::Success,
+            },
+        ],
+    );
+}
+
 pub fn print_device_config(
     device_name: &str,
     fingerprint: &str,

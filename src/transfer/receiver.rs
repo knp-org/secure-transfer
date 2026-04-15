@@ -67,25 +67,18 @@ pub async fn listen(
 
     let share_display: Vec<String> = share_dirs.iter().map(|d| d.display().to_string()).collect();
 
-    println!();
-    println!("  +--------------------------------------------------+");
-    println!("  |  secure-transfer -- Quantum-Safe Receiver         |");
-    println!("  |--------------------------------------------------|");
-    println!("  |  Name: {:<43} |", device_name);
-    println!("  |  Port: {:<42} |", port);
-    println!("  |  Fingerprint: {}...  |", &local_fp[..36]);
-    println!("  |  Save to: {:<39} |", truncate_path(&save_dir, 39));
-    println!(
-        "  |  Sharing: {:<39} |",
-        if unrestricted {
-            "[!!] ALL directories".to_string()
-        } else {
-            truncate_str(&share_display.join(", "), 39)
-        }
+    let sharing_str = if unrestricted {
+        "[!!] ALL directories".to_string()
+    } else {
+        share_display.join(", ")
+    };
+    ui::print_receiver_banner(
+        &device_name,
+        port,
+        &local_fp,
+        &save_dir.display().to_string(),
+        &sharing_str,
     );
-    println!("  |  Encryption: X25519MLKEM768 + AES-256-GCM       |");
-    println!("  +--------------------------------------------------+");
-    println!();
 
     // Session-level trust: fingerprint → highest scope approved this session.
     // Populated for OneTime grants so the companion Download connection (which
@@ -718,20 +711,6 @@ fn is_safe_relative_path(path: &str) -> bool {
     }
     p.components()
         .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
-}
-
-/// Truncate a path display to fit a given width
-fn truncate_path(path: &Path, max_len: usize) -> String {
-    let s = path.display().to_string();
-    truncate_str(&s, max_len)
-}
-
-fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("…{}", &s[s.len() - (max_len - 1)..])
-    }
 }
 
 fn dirs_home() -> PathBuf {
