@@ -1,0 +1,22 @@
+# Build artifacts
+/target/
+
+# Cargo lock (optional for binaries, include for reproducibility)
+# Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+.codex/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Sensitive files
+*.key
+*.pem
+
+.codex/

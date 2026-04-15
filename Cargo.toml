@@ -1,0 +1,52 @@
+[package]
+name = "secure-transfer"
+version = "0.1.0"
+edition = "2024"
+description = "Quantum-safe secure file transfer over LAN"
+license = "MIT"
+
+[[bin]]
+name = "secure-transfer"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+dialoguer = "0.11"
+indicatif = "0.17"
+console = "0.15"
+
+# Device discovery
+mdns-sd = "0.11"
+
+# TLS — quantum-safe via prefer-post-quantum
+rustls = { version = "0.23", features = ["prefer-post-quantum", "ring"] }
+tokio-rustls = "0.26"
+rustls-pemfile = "2"
+rcgen = { version = "0.13", features = ["pem"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Crypto utilities
+sha2 = "0.10"
+hex = "0.4"
+
+# File system
+walkdir = "2"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# System info
+hostname = "0.4"
+directories = "6"
