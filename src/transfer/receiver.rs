@@ -1,12 +1,15 @@
 use anyhow::{Context, Result};
 use sha2::Digest;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
+use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 use walkdir::WalkDir;
 
-use crate::config::{self, AccessDuration, TrustedPeer};
+use crate::config::{self, AccessDuration, AccessScope, TrustedPeer};
 use crate::crypto::certs;
 use crate::history::{self, TransactionRecord};
 use crate::transfer::protocol::{
@@ -78,6 +81,12 @@ pub async fn listen(port: u16, save_dir: PathBuf, share_dirs: Vec<PathBuf>, unre
     println!("  +--------------------------------------------------+");
     println!();
 
+    // Session-level trust: fingerprint → highest scope approved this session.
+    // Populated for OneTime grants so the companion Download connection (which
+    // follows a Browse in the same download operation) doesn't prompt again.
+    let session_trusted: Arc<Mutex<HashMap<String, AccessScope>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+
     loop {
         let (tcp_stream, peer_addr) = listener.accept().await?;
         info!("Incoming connection from {}", peer_addr);
@@ -85,11 +94,12 @@ pub async fn listen(port: u16, save_dir: PathBuf, share_dirs: Vec<PathBuf>, unre
         let acceptor = acceptor.clone();
         let save_dir = save_dir.clone();
         let share_dirs = share_dirs.clone();
+        let session_trusted = session_trusted.clone();
 
         tokio::spawn(async move {
             match acceptor.accept(tcp_stream).await {
                 Ok(tls_stream) => {
-                    if let Err(e) = handle_connection(tls_stream, &save_dir, &share_dirs, unrestricted).await {
+                    if let Err(e) = handle_connection(tls_stream, &save_dir, &share_dirs, unrestricted, session_trusted).await {
                         warn!("Connection from {} failed: {}", peer_addr, e);
                     }
                 }
@@ -107,15 +117,14 @@ async fn handle_connection(
     save_dir: &Path,
     share_dirs: &[PathBuf],
     unrestricted: bool,
+    session_trusted: Arc<Mutex<HashMap<String, AccessScope>>>,
 ) -> Result<()> {
     // Read the connection request to determine what the client wants
     let conn_req: ConnectionRequest = protocol::read_frame(&mut tls_stream).await?;
 
-    let request_type_str = match &conn_req.request_type {
-        RequestType::Send => "Send",
-        RequestType::Browse => "Browse",
-        RequestType::Download => "Download",
-    };
+    // Display label — used only for logging and history records, not for
+    // any access-control decisions (those use the RequestType enum directly).
+    let request_label = conn_req.request_type.as_str();
 
     info!(
         "Request from '{}' (fp: {}): {:?}",
@@ -129,12 +138,19 @@ async fn handle_connection(
     let peer_fingerprint = conn_req.fingerprint.clone();
     let peer_name = conn_req.hostname.clone();
 
-    // Check if peer is authorized for this request type
+    // Check persistent config, then fall back to session-level trust.
+    // Session trust is populated for OneTime grants so that a Browse grant
+    // is honoured on the companion Download connection without re-prompting.
     let authorized = if peer_fingerprint.is_empty() {
-        // Legacy client without fingerprint — always prompt
         false
+    } else if config.is_authorized(&peer_fingerprint, &conn_req.request_type) {
+        true
     } else {
-        config.is_authorized(&peer_fingerprint, request_type_str)
+        let session = session_trusted.lock().await;
+        session
+            .get(&peer_fingerprint)
+            .map(|scope| config::AppConfig::scope_covers(scope, &conn_req.request_type))
+            .unwrap_or(false)
     };
 
     if !authorized {
@@ -142,7 +158,7 @@ async fn handle_connection(
         let decision = ui::prompt_access_grant(
             &peer_name,
             &peer_fingerprint,
-            request_type_str,
+            &conn_req.request_type,
         )?;
 
         if !decision.granted {
@@ -151,7 +167,7 @@ async fn handle_connection(
                 timestamp: history::now_timestamp(),
                 peer_name: peer_name.clone(),
                 peer_fingerprint: peer_fingerprint.clone(),
-                action: request_type_str.to_string(),
+                action: request_label.to_string(),
                 target_paths: vec![],
                 bytes_transferred: 0,
                 status: "Denied".to_string(),
@@ -169,17 +185,30 @@ async fn handle_connection(
             return Ok(());
         }
 
-        // If granted persistently, store the trust record
         if decision.duration == AccessDuration::Persistent && !peer_fingerprint.is_empty() {
+            // Persist to disk so future receiver sessions auto-approve
             let trusted_peer = TrustedPeer {
                 name: peer_name.clone(),
                 fingerprint: peer_fingerprint.clone(),
-                scope: decision.scope,
+                scope: decision.scope.clone(),
                 duration: decision.duration,
                 last_seen: history::now_timestamp(),
             };
             config.add_trusted_peer(peer_fingerprint.clone(), trusted_peer)?;
             info!("Peer '{}' added to trusted devices", peer_name);
+        } else if !peer_fingerprint.is_empty() {
+            // OneTime grant: record in the session map so the companion
+            // Download connection (Browse → Download) doesn't re-prompt.
+            //
+            // Cap at 1 000 entries to prevent a DoS where an attacker floods the
+            // receiver with unique-fingerprint OneTime connections and grows the
+            // map unboundedly for the lifetime of the process.
+            let mut session = session_trusted.lock().await;
+            if session.len() < 1_000 {
+                session
+                    .entry(peer_fingerprint.clone())
+                    .or_insert(decision.scope.clone());
+            }
         }
     } else {
         // Update last_seen for trusted peers
@@ -225,7 +254,7 @@ async fn handle_send(
     // For trusted persistent peers, skip the transfer confirmation prompt
     let config = config::AppConfig::load().unwrap_or_default();
     let auto_accept = if !peer_fingerprint.is_empty() {
-        config.is_authorized(peer_fingerprint, "Send")
+        config.is_authorized(peer_fingerprint, &RequestType::Send)
     } else {
         false
     };
@@ -279,6 +308,22 @@ async fn handle_send(
     // Receive each entry
     for _ in 0..manifest.total_entries {
         let header: FileHeader = protocol::read_frame(&mut tls_stream).await?;
+
+        // Reject paths that could escape the save directory (e.g. "../../etc/passwd")
+        if !is_safe_relative_path(&header.relative_path) {
+            warn!(
+                "Rejecting unsafe path from sender: '{}'",
+                header.relative_path
+            );
+            let ack = Ack {
+                status: AckStatus::Error,
+                checksum: String::new(),
+                message: format!("Unsafe path rejected: {}", header.relative_path),
+            };
+            protocol::write_frame(&mut tls_stream, &ack).await?;
+            continue;
+        }
+
         let dest_path = save_dir.join(&header.relative_path);
 
         if header.is_dir {
@@ -625,6 +670,20 @@ fn list_directory(path: &Path) -> Result<Vec<BrowseEntry>> {
     });
 
     Ok(entries)
+}
+
+/// Reject any relative path that could escape the destination directory.
+///
+/// Blocks absolute paths, `..` components, and Windows-style prefixes so that
+/// `save_dir.join(relative_path)` can never land outside `save_dir`.
+fn is_safe_relative_path(path: &str) -> bool {
+    use std::path::Component;
+    let p = std::path::Path::new(path);
+    if p.is_absolute() {
+        return false;
+    }
+    p.components()
+        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
 }
 
 /// Truncate a path display to fit a given width

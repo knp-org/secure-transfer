@@ -71,12 +71,14 @@ async fn main() -> Result<()> {
                 }
             }
 
-            let addr: SocketAddr = if let Some(ref target) = to {
-                target
+            let (addr, expected_fingerprint, peer_name) = if let Some(ref target) = to {
+                let addr: SocketAddr = target
                     .parse()
                     .map_err(|_| {
                         anyhow::anyhow!("Invalid address '{}'. Use format: ip:port", target)
-                    })?
+                    })?;
+                // Manual address — no mDNS fingerprint; TOFU prompt handled in send_files
+                (addr, None, None)
             } else {
                 let scan_sp = ui::show_scanning_spinner();
                 let devices = discovery::browse::browse_devices(None)?;
@@ -86,7 +88,8 @@ async fn main() -> Result<()> {
                 match selected {
                     Some(idx) => {
                         let device = &devices[idx];
-                        SocketAddr::new(device.ip, device.port)
+                        let fp = if device.fingerprint.is_empty() { None } else { Some(device.fingerprint.clone()) };
+                        (SocketAddr::new(device.ip, device.port), fp, Some(device.hostname.clone()))
                     }
                     None => {
                         info!("No device selected, exiting.");
@@ -95,7 +98,7 @@ async fn main() -> Result<()> {
                 }
             };
 
-            transfer::sender::send_files(&paths, addr).await
+            transfer::sender::send_files(&paths, addr, expected_fingerprint, peer_name).await
         }
 
         Commands::Download {
@@ -111,12 +114,14 @@ async fn main() -> Result<()> {
                 })
                 .unwrap_or_else(|| std::path::PathBuf::from("./downloaded"));
 
-            let addr: SocketAddr = if let Some(ref target) = from {
-                target
+            let (addr, expected_fingerprint, peer_name) = if let Some(ref target) = from {
+                let addr: SocketAddr = target
                     .parse()
                     .map_err(|_| {
                         anyhow::anyhow!("Invalid address '{}'. Use format: ip:port", target)
-                    })?
+                    })?;
+                // Manual address — no mDNS fingerprint; TOFU prompt handled in download_files
+                (addr, None, None)
             } else {
                 let scan_sp = ui::show_scanning_spinner();
                 let devices = discovery::browse::browse_devices(None)?;
@@ -126,7 +131,8 @@ async fn main() -> Result<()> {
                 match selected {
                     Some(idx) => {
                         let device = &devices[idx];
-                        SocketAddr::new(device.ip, device.port)
+                        let fp = if device.fingerprint.is_empty() { None } else { Some(device.fingerprint.clone()) };
+                        (SocketAddr::new(device.ip, device.port), fp, Some(device.hostname.clone()))
                     }
                     None => {
                         info!("No device selected, exiting.");
@@ -135,7 +141,7 @@ async fn main() -> Result<()> {
                 }
             };
 
-            transfer::downloader::download_files(addr, remote_path, save_dir).await
+            transfer::downloader::download_files(addr, remote_path, save_dir, expected_fingerprint, peer_name).await
         }
 
         Commands::Config { action } => {

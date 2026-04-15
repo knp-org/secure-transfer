@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use crate::config::{AccessDuration, AccessScope};
 use crate::discovery::DiscoveredDevice;
-use crate::transfer::protocol::{BrowseResponse, TransferManifest};
+use crate::transfer::protocol::{BrowseResponse, RequestType, TransferManifest};
 
 // ────────────────────────────────────────────────────────────────
 // Custom spinner frames for different phases
@@ -682,6 +682,85 @@ pub struct AccessDecision {
     pub duration: AccessDuration,
 }
 
+/// Prompt the user to verify a new receiver's certificate fingerprint (TOFU).
+///
+/// Used when connecting to a device that isn't in the trusted-peer list and
+/// whose fingerprint wasn't obtained via mDNS discovery. The user must
+/// confirm out-of-band that the fingerprint shown matches the one displayed
+/// on the receiver (similar to SSH host-key verification).
+///
+/// Returns `true` if the user accepts, `false` if they decline.
+pub fn prompt_verify_fingerprint(fingerprint: &str, peer_name: &str) -> std::io::Result<bool> {
+    // Show in groups of 8 hex chars for readability, e.g. "a1b2c3d4 e5f6a7b8 …"
+    let fp_grouped: String = fingerprint
+        .as_bytes()
+        .chunks(8)
+        .map(|c| std::str::from_utf8(c).unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    println!();
+    println!("  {}", style("+-----------------------------------------------+").yellow());
+    println!(
+        "  {}  {}  {}",
+        style("|").yellow(),
+        style("New Device — Verify Fingerprint").white().bold(),
+        style("         |").yellow()
+    );
+    println!("  {}", style("|-----------------------------------------------|").yellow());
+    println!(
+        "  {}  {} {:<40}{}",
+        style("|").yellow(),
+        style("Device: ").dim(),
+        style(peer_name).cyan().bold(),
+        style("|").yellow()
+    );
+    println!("  {}", style("|-----------------------------------------------|").yellow());
+    println!(
+        "  {}  {}{}",
+        style("|").yellow(),
+        style(format!("  {}", &fp_grouped[..fp_grouped.len().min(46)])).dim(),
+        style("|").yellow()
+    );
+    if fp_grouped.len() > 46 {
+        println!(
+            "  {}  {}{}",
+            style("|").yellow(),
+            style(format!("  {}", &fp_grouped[46..])).dim(),
+            style("|").yellow()
+        );
+    }
+    println!("  {}", style("|-----------------------------------------------|").yellow());
+    println!(
+        "  {}  {}{}",
+        style("|").yellow(),
+        style("Verify this fingerprint matches the receiver   ").dim(),
+        style("|").yellow()
+    );
+    println!(
+        "  {}  {}{}",
+        style("|").yellow(),
+        style("before trusting. Once trusted, future          ").dim(),
+        style("|").yellow()
+    );
+    println!(
+        "  {}  {}{}",
+        style("|").yellow(),
+        style("connections will be verified automatically.    ").dim(),
+        style("|").yellow()
+    );
+    println!("  {}", style("+-----------------------------------------------+").yellow());
+    println!();
+
+    let confirmed = Confirm::new()
+        .with_prompt("  Trust this device?")
+        .default(false)
+        .interact()
+        .map_err(std::io::Error::other)?;
+
+    Ok(confirmed)
+}
+
 /// Prompt the user to grant access to an incoming peer connection
 ///
 /// Displays device name, fingerprint, and request type, then offers
@@ -689,13 +768,12 @@ pub struct AccessDecision {
 pub fn prompt_access_grant(
     peer_name: &str,
     fingerprint: &str,
-    request_type: &str,
+    request_type: &RequestType,
 ) -> std::io::Result<AccessDecision> {
     let request_label = match request_type {
-        "Push" => "Send Files",
-        "Browse" => "Browse Files",
-        "Download" => "Download Files",
-        _ => request_type,
+        RequestType::Send => "Send Files",
+        RequestType::Browse => "Browse Files",
+        RequestType::Download => "Download Files",
     };
 
     let fp_display = if fingerprint.len() > 12 {
@@ -730,15 +808,28 @@ pub fn prompt_access_grant(
         style(request_label).white().bold(),
         style("|").yellow()
     );
+    // Option 2 label and scope depend on the request type so we don't save
+    // SendOnly scope for a device that is asking to Browse or Download.
+    let (opt2_label, opt2_scope) = match request_type {
+        RequestType::Browse | RequestType::Download => (
+            "Trust this device for browsing & downloads",
+            AccessScope::SharedReadOnly,
+        ),
+        RequestType::Send => (
+            "Trust this device for file sends",
+            AccessScope::SendOnly,
+        ),
+    };
+
     println!("  {}", style("|-----------------------------------------------|").yellow());
     println!("  {}  {}                            {}",
         style("|").yellow(),
         style("1. Allow this request only").white(),
         style("|").yellow()
     );
-    println!("  {}  {}   {}",
+    println!("  {}  {:<44}{}",
         style("|").yellow(),
-        style("2. Trust this device for file sends").white(),
+        style(format!("2. {}", opt2_label)).white(),
         style("|").yellow()
     );
     println!("  {}  {}{}",
@@ -756,7 +847,7 @@ pub fn prompt_access_grant(
 
     let items = vec![
         "Allow this request only",
-        "Trust this device for file sends",
+        opt2_label,
         "Trust this device with full access",
         "Deny access",
     ];
@@ -772,9 +863,8 @@ pub fn prompt_access_grant(
         0 => {
             // Accept once — scope matches the current request type
             let scope = match request_type {
-                "Send" => AccessScope::SendOnly,
-                "Browse" | "Download" => AccessScope::SharedReadOnly,
-                _ => AccessScope::SendOnly,
+                RequestType::Send => AccessScope::SendOnly,
+                RequestType::Browse | RequestType::Download => AccessScope::SharedReadOnly,
             };
             AccessDecision {
                 granted: true,
@@ -784,7 +874,7 @@ pub fn prompt_access_grant(
         }
         1 => AccessDecision {
             granted: true,
-            scope: AccessScope::SendOnly,
+            scope: opt2_scope,
             duration: AccessDuration::Persistent,
         },
         2 => AccessDecision {

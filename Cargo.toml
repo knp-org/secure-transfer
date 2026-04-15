@@ -1,6 +1,6 @@
 [package]
 name = "secure-transfer"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 description = "Quantum-safe secure file transfer over LAN"
 license = "AGPL-3.0-only"

@@ -5,10 +5,12 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+use crate::transfer::protocol::RequestType;
+
 const DEFAULT_PORT: u16 = 9876;
 
 /// Access scope for a trusted peer — what operations they can perform
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AccessScope {
     /// Authorized to only send files (drops if they attempt to Browse/Download)
     SendOnly,
@@ -172,22 +174,36 @@ impl AppConfig {
         self.trusted_peers.get(fingerprint)
     }
 
-    /// Check if a peer is authorized for a given request type
-    /// Returns true if the peer's scope covers the requested operation
-    pub fn is_authorized(&self, fingerprint: &str, request_type: &str) -> bool {
+    /// Check if a given scope covers a request type.
+    ///
+    /// Scope matrix:
+    /// - `SendOnly`       → Send only; Browse and Download are rejected.
+    /// - `SharedReadOnly` → Browse and Download only; Send is rejected.
+    ///                      (A read-only peer should not be able to push files.)
+    /// - `FullAccess`     → All request types.
+    ///
+    /// Used for both persistent-config and session-level checks.
+    pub fn scope_covers(scope: &AccessScope, request_type: &RequestType) -> bool {
+        matches!(
+            (scope, request_type),
+            (AccessScope::FullAccess, _)
+                | (AccessScope::SendOnly, RequestType::Send)
+                | (AccessScope::SharedReadOnly, RequestType::Browse)
+                | (AccessScope::SharedReadOnly, RequestType::Download)
+        )
+    }
+
+    /// Check if a peer is authorized for a given request type.
+    ///
+    /// Returns `false` for OneTime peers (they are never auto-authorized on
+    /// subsequent connections) and for fingerprints not in the trusted list.
+    pub fn is_authorized(&self, fingerprint: &str, request_type: &RequestType) -> bool {
         if let Some(peer) = self.trusted_peers.get(fingerprint) {
             // OneTime peers are never auto-authorized on subsequent connections
             if peer.duration == AccessDuration::OneTime {
                 return false;
             }
-            match (&peer.scope, request_type) {
-                (AccessScope::FullAccess, _) => true,
-                (AccessScope::SendOnly, "Send") => true,
-                (AccessScope::SharedReadOnly, "Send") => true,
-                (AccessScope::SharedReadOnly, "Browse") => true,
-                (AccessScope::SharedReadOnly, "Download") => true,
-                _ => false,
-            }
+            Self::scope_covers(&peer.scope, request_type)
         } else {
             false
         }

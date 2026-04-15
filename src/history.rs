@@ -1,8 +1,15 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::sync::Mutex;
 
 use crate::config;
+
+/// Process-level lock that serialises all history read-modify-write operations.
+///
+/// Without this, concurrent connections race: both read the file, both append
+/// in memory, and the second write silently overwrites the first write's record.
+static HISTORY_LOCK: Mutex<()> = Mutex::new(());
 
 /// A single transaction log record
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,8 +25,15 @@ pub struct TransactionRecord {
     pub status: String,
 }
 
-/// Append a transaction record to the history file
+/// Append a transaction record to the history file.
+///
+/// Holds `HISTORY_LOCK` for the duration of the read-modify-write so that
+/// concurrent connections cannot interleave their writes and lose records.
 pub fn append_record(record: &TransactionRecord) -> Result<()> {
+    let _guard = HISTORY_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
     let path = config::history_path()?;
     let mut records = load_records().unwrap_or_default();
     records.push(record.clone());

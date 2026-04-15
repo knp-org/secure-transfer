@@ -5,9 +5,9 @@ use std::path::PathBuf;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
-use crate::config;
+use crate::config::{self, AccessDuration, AccessScope, TrustedPeer};
 use crate::crypto::certs;
 use crate::history::{self, TransactionRecord};
 use crate::transfer::protocol::{
@@ -16,17 +16,25 @@ use crate::transfer::protocol::{
 };
 use crate::ui;
 
-/// Browse files on a remote device and download selected ones
+/// Browse files on a remote device and download selected ones.
+///
+/// `expected_fingerprint`: the receiver's certificate fingerprint from mDNS
+/// discovery. `Some` → TLS enforces an exact match; `None` → TOFU prompt
+/// after handshake for manual `--from` connections.
+///
+/// `peer_name`: display name used in UI prompts.
 pub async fn download_files(
     addr: SocketAddr,
     remote_path: Option<String>,
     save_dir: PathBuf,
+    expected_fingerprint: Option<String>,
+    peer_name: Option<String>,
 ) -> Result<()> {
     // Ensure save directory exists
     tokio::fs::create_dir_all(&save_dir).await?;
 
-    // Connect via TLS
-    let tls_config = certs::build_client_config()?;
+    // Connect via TLS — enforce fingerprint when available from mDNS.
+    let tls_config = certs::build_client_config(expected_fingerprint.clone())?;
     let connector = TlsConnector::from(tls_config);
     let tcp_stream = TcpStream::connect(addr)
         .await
@@ -41,6 +49,48 @@ pub async fn download_files(
         .context("TLS handshake failed")?;
 
     info!("Quantum-safe TLS connection established to {}", addr);
+
+    // TOFU for manual connections: verify and optionally persist the receiver's
+    // fingerprint before we send any data.
+    let verified_fingerprint: String = if expected_fingerprint.is_none() {
+        let server_fp = {
+            let (_, rustls_conn) = tls_stream.get_ref();
+            rustls_conn
+                .peer_certificates()
+                .and_then(|certs| certs.first())
+                .map(|cert| certs::cert_fingerprint(cert.as_ref()))
+        };
+
+        // Fail closed: if we cannot extract the server certificate we must not
+        // proceed — silently skipping would allow a connection with no trust anchor.
+        let server_fp = server_fp
+            .context("Could not extract server certificate after TLS handshake")?;
+
+        let app_config = config::AppConfig::load().unwrap_or_default();
+        if !app_config.is_trusted(&server_fp) {
+            let addr_str = addr.to_string();
+            let display_name = peer_name.as_deref().unwrap_or(&addr_str);
+            if !ui::prompt_verify_fingerprint(&server_fp, display_name)? {
+                anyhow::bail!("Connection aborted — receiver fingerprint rejected");
+            }
+            // Persist so the next connection is silent
+            let mut cfg = config::AppConfig::load().unwrap_or_default();
+            cfg.add_trusted_peer(
+                server_fp.clone(),
+                TrustedPeer {
+                    name: display_name.to_string(),
+                    fingerprint: server_fp.clone(),
+                    scope: AccessScope::FullAccess,
+                    duration: AccessDuration::Persistent,
+                    last_seen: history::now_timestamp(),
+                },
+            )?;
+        }
+        server_fp
+    } else {
+        // Fingerprint was enforced by TLS; use what we expected.
+        expected_fingerprint.clone().unwrap_or_default()
+    };
 
     // Phase 1: Browse — let user navigate and select files
     let hostname = config::AppConfig::load()
@@ -122,7 +172,9 @@ pub async fn download_files(
         return Ok(());
     }
 
-    // Phase 2: Download — open new connection to download selected files
+    // Phase 2: Download — open new connection to download selected files.
+    // We already verified the fingerprint above; enforce it strictly here so
+    // a MITM can't swap the cert between the Browse and Download phases.
     info!(
         "Downloading {} item(s) to {}",
         selected_paths.len(),
@@ -133,7 +185,8 @@ pub async fn download_files(
     let server_name = rustls::pki_types::ServerName::try_from("secure-transfer.local")
         .map_err(|e| anyhow::anyhow!("Invalid server name: {}", e))?;
 
-    let connector = TlsConnector::from(certs::build_client_config()?);
+    let pinned_fp = if verified_fingerprint.is_empty() { None } else { Some(verified_fingerprint) };
+    let connector = TlsConnector::from(certs::build_client_config(pinned_fp)?);
     let mut tls_stream = connector.connect(server_name, tcp_stream).await?;
 
     // Send download request with fingerprint
@@ -192,6 +245,23 @@ pub async fn download_files(
     // Receive files
     for _ in 0..manifest.total_entries {
         let header: FileHeader = protocol::read_frame(&mut tls_stream).await?;
+
+        // Reject paths that could escape the save directory (e.g. "../../etc/passwd")
+        if !is_safe_relative_path(&header.relative_path) {
+            warn!(
+                "Rejecting unsafe path from server: '{}'",
+                header.relative_path
+            );
+            // Send an error ack so the server doesn't hang waiting for a response
+            let ack = Ack {
+                status: AckStatus::Error,
+                checksum: String::new(),
+                message: format!("Unsafe path rejected: {}", header.relative_path),
+            };
+            protocol::write_frame(&mut tls_stream, &ack).await?;
+            continue;
+        }
+
         let dest_path = save_dir.join(&header.relative_path);
 
         if header.is_dir {
@@ -274,4 +344,18 @@ pub async fn download_files(
 
     tls_stream.shutdown().await?;
     Ok(())
+}
+
+/// Reject any relative path that could escape the destination directory.
+///
+/// Blocks absolute paths, `..` components, and Windows-style prefixes so that
+/// `save_dir.join(relative_path)` can never land outside `save_dir`.
+fn is_safe_relative_path(path: &str) -> bool {
+    use std::path::Component;
+    let p = std::path::Path::new(path);
+    if p.is_absolute() {
+        return false;
+    }
+    p.components()
+        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
 }

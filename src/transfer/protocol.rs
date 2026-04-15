@@ -78,6 +78,19 @@ pub enum RequestType {
     Download,
 }
 
+impl RequestType {
+    /// Human-readable label used for logging and history records.
+    ///
+    /// **Not** intended for access-control logic — use the enum variants directly.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RequestType::Send => "Send",
+            RequestType::Browse => "Browse",
+            RequestType::Download => "Download",
+        }
+    }
+}
+
 /// Initial handshake frame — sent first on every connection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionRequest {

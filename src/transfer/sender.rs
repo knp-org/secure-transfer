@@ -8,7 +8,7 @@ use tokio_rustls::TlsConnector;
 use tracing::{debug, info};
 use walkdir::WalkDir;
 
-use crate::config;
+use crate::config::{self, AccessDuration, AccessScope, TrustedPeer};
 use crate::crypto::certs;
 use crate::history::{self, TransactionRecord};
 use crate::transfer::protocol::{
@@ -91,8 +91,20 @@ fn collect_entries(paths: &[PathBuf]) -> Result<Vec<TransferEntry>> {
     Ok(entries)
 }
 
-/// Send files/directories to a remote receiver
-pub async fn send_files(paths: &[PathBuf], addr: SocketAddr) -> Result<()> {
+/// Send files/directories to a remote receiver.
+///
+/// `expected_fingerprint`: the receiver's certificate fingerprint obtained
+/// from mDNS discovery. When `Some`, TLS will reject a mismatched cert
+/// outright (MITM protection). When `None` (manual `--to` connection), the
+/// fingerprint is verified interactively after the handshake.
+///
+/// `peer_name`: display name for UI prompts; falls back to the socket address.
+pub async fn send_files(
+    paths: &[PathBuf],
+    addr: SocketAddr,
+    expected_fingerprint: Option<String>,
+    peer_name: Option<String>,
+) -> Result<()> {
     // Collect all entries
     let entries = collect_entries(paths)?;
     let total_files = entries.iter().filter(|e| !e.is_dir).count() as u64;
@@ -107,8 +119,9 @@ pub async fn send_files(paths: &[PathBuf], addr: SocketAddr) -> Result<()> {
     // Show connecting animation
     let conn_sp = ui::show_connecting_spinner(&addr.to_string());
 
-    // Connect via TLS
-    let tls_config = certs::build_client_config()?;
+    // Connect via TLS — pass expected fingerprint so the verifier can enforce
+    // an exact match when we have one from mDNS discovery.
+    let tls_config = certs::build_client_config(expected_fingerprint.clone())?;
     let connector = TlsConnector::from(tls_config);
     let tcp_stream = TcpStream::connect(addr)
         .await
@@ -123,6 +136,44 @@ pub async fn send_files(paths: &[PathBuf], addr: SocketAddr) -> Result<()> {
         .context("TLS handshake failed")?;
 
     ui::finish_spinner_success(&conn_sp, "Quantum-safe TLS 1.3 connection established");
+
+    // TOFU for manual connections: when we had no mDNS fingerprint we must
+    // verify the receiver's cert fingerprint interactively before proceeding.
+    if expected_fingerprint.is_none() {
+        let server_fp = {
+            let (_, rustls_conn) = tls_stream.get_ref();
+            rustls_conn
+                .peer_certificates()
+                .and_then(|certs| certs.first())
+                .map(|cert| certs::cert_fingerprint(cert.as_ref()))
+        };
+
+        // Fail closed: if we cannot extract the server certificate we must not
+        // proceed — silently skipping would allow a connection with no trust anchor.
+        let server_fp = server_fp
+            .context("Could not extract server certificate after TLS handshake")?;
+
+        let app_config = config::AppConfig::load().unwrap_or_default();
+        if !app_config.is_trusted(&server_fp) {
+            let addr_str = addr.to_string();
+            let display_name = peer_name.as_deref().unwrap_or(&addr_str);
+            if !ui::prompt_verify_fingerprint(&server_fp, display_name)? {
+                anyhow::bail!("Connection aborted — receiver fingerprint rejected");
+            }
+            // Persist the receiver's fingerprint so future connections are silent
+            let mut cfg = config::AppConfig::load().unwrap_or_default();
+            cfg.add_trusted_peer(
+                server_fp.clone(),
+                TrustedPeer {
+                    name: display_name.to_string(),
+                    fingerprint: server_fp.clone(),
+                    scope: AccessScope::FullAccess,
+                    duration: AccessDuration::Persistent,
+                    last_seen: history::now_timestamp(),
+                },
+            )?;
+        }
+    }
     info!("Quantum-safe TLS connection established to {}", addr);
 
     // Get our identity

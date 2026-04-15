@@ -122,11 +122,15 @@ pub fn build_server_config() -> Result<Arc<ServerConfig>> {
 
 /// Build a rustls ClientConfig with TOFU certificate verification
 ///
+/// `expected_fingerprint`: when `Some`, the TLS handshake will be rejected
+/// unless the server certificate matches exactly. Pass `None` for manual
+/// connections where the fingerprint isn't known in advance.
+///
 /// Uses X25519MLKEM768 hybrid key exchange for quantum safety.
-pub fn build_client_config() -> Result<Arc<ClientConfig>> {
+pub fn build_client_config(expected_fingerprint: Option<String>) -> Result<Arc<ClientConfig>> {
     let config = ClientConfig::builder()
         .dangerous()
-        .with_custom_certificate_verifier(Arc::new(TofuCertVerifier))
+        .with_custom_certificate_verifier(Arc::new(TofuCertVerifier { expected_fingerprint }))
         .with_no_client_auth();
 
     info!(
@@ -138,10 +142,21 @@ pub fn build_client_config() -> Result<Arc<ClientConfig>> {
 
 /// Trust-On-First-Use certificate verifier
 ///
-/// On first connection to a new peer, the user is prompted to verify
-/// the certificate fingerprint. Once accepted, it's stored for future use.
+/// When an `expected_fingerprint` is provided (e.g. from mDNS discovery),
+/// the cert is accepted only if it matches exactly — any mismatch is rejected
+/// as a potential MITM attack.
+///
+/// When no expected fingerprint is provided (manual `--to` connections),
+/// the verifier checks the local trusted-peer list; if found, the cert is
+/// accepted. Unknown peers are accepted at the TLS layer so the connection
+/// can proceed, but the caller **must** prompt the user to verify the
+/// fingerprint before sending any data.
 #[derive(Debug)]
-struct TofuCertVerifier;
+struct TofuCertVerifier {
+    /// Fingerprint we expect from mDNS or a previously pinned trust record.
+    /// `None` means "unknown — caller handles post-handshake verification".
+    expected_fingerprint: Option<String>,
+}
 
 impl ServerCertVerifier for TofuCertVerifier {
     fn verify_server_cert(
@@ -154,23 +169,37 @@ impl ServerCertVerifier for TofuCertVerifier {
     ) -> Result<ServerCertVerified, rustls::Error> {
         let fingerprint = cert_fingerprint(end_entity.as_ref());
 
-        // Check if this peer is already trusted
+        // Strict enforcement when we have a known-good fingerprint
+        if let Some(expected) = &self.expected_fingerprint {
+            if fingerprint == *expected {
+                info!("Certificate fingerprint verified");
+                return Ok(ServerCertVerified::assertion());
+            }
+            warn!(
+                "Certificate fingerprint mismatch! Expected {}…, got {}…",
+                &expected[..12.min(expected.len())],
+                &fingerprint[..12.min(fingerprint.len())]
+            );
+            return Err(rustls::Error::General(
+                "Certificate fingerprint mismatch — possible MITM attack".to_string(),
+            ));
+        }
+
+        // No expected fingerprint — check whether this peer is already trusted
         let config = config::AppConfig::load().map_err(|e| {
             warn!("Failed to load config for TOFU check: {}", e);
             rustls::Error::General("Config load failed".to_string())
         })?;
 
         if config.is_trusted(&fingerprint) {
-            info!("Peer certificate fingerprint verified (trusted)");
+            info!("Certificate fingerprint verified (trusted peer)");
             return Ok(ServerCertVerified::assertion());
         }
 
-        // For new peers, we accept the cert and store it after user confirmation
-        // The actual user prompt happens in the transfer layer
-        warn!(
-            "New peer certificate fingerprint: {}",
-            fingerprint
-        );
+        // Unknown peer on a manual connection — accept the TLS cert so the
+        // connection can be established, but the transfer layer is responsible
+        // for prompting the user to confirm the fingerprint before proceeding.
+        info!("New peer certificate fingerprint: {}", fingerprint);
         Ok(ServerCertVerified::assertion())
     }
 
