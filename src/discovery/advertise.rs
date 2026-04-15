@@ -46,7 +46,9 @@ pub fn advertise(port: u16) -> Result<ServiceDaemon> {
         port,
         &properties[..],
     )
-    .context("Failed to create mDNS service info")?;
+    .context("Failed to create mDNS service info")?
+    // Let mdns-sd populate the active interface addresses for this host.
+    .enable_addr_auto();
 
     mdns.register(service_info)
         .context("Failed to register mDNS service")?;

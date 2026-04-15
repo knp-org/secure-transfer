@@ -46,8 +46,15 @@ pub fn browse_devices(timeout: Option<Duration>) -> Result<Vec<DiscoveredDevice>
 
                 let port = info.get_port();
 
-                // Get the first available IP address
-                if let Some(ip) = info.get_addresses().iter().next() {
+                // Prefer IPv4 on typical LANs to avoid selecting an unusable
+                // link-local IPv6 address when both are advertised.
+                let ip = info
+                    .get_addresses()
+                    .iter()
+                    .find(|ip| ip.is_ipv4())
+                    .or_else(|| info.get_addresses().iter().next());
+
+                if let Some(ip) = ip {
                     let device = DiscoveredDevice {
                         hostname,
                         ip: *ip,
