@@ -44,11 +44,7 @@ async fn main() -> Result<()> {
             unrestricted,
         } => {
             let save_dir = save_dir
-                .or_else(|| {
-                    config::AppConfig::load()
-                        .ok()
-                        .map(|c| c.default_save_dir)
-                })
+                .or_else(|| config::AppConfig::load().ok().map(|c| c.default_save_dir))
                 .unwrap_or_else(|| std::path::PathBuf::from("./received"));
 
             // Start mDNS advertisement
@@ -72,11 +68,9 @@ async fn main() -> Result<()> {
             }
 
             let (addr, expected_fingerprint, peer_name) = if let Some(ref target) = to {
-                let addr: SocketAddr = target
-                    .parse()
-                    .map_err(|_| {
-                        anyhow::anyhow!("Invalid address '{}'. Use format: ip:port", target)
-                    })?;
+                let addr: SocketAddr = target.parse().map_err(|_| {
+                    anyhow::anyhow!("Invalid address '{}'. Use format: ip:port", target)
+                })?;
                 // Manual address — no mDNS fingerprint; TOFU prompt handled in send_files
                 (addr, None, None)
             } else {
@@ -88,8 +82,16 @@ async fn main() -> Result<()> {
                 match selected {
                     Some(idx) => {
                         let device = &devices[idx];
-                        let fp = if device.fingerprint.is_empty() { None } else { Some(device.fingerprint.clone()) };
-                        (SocketAddr::new(device.ip, device.port), fp, Some(device.hostname.clone()))
+                        let fp = if device.fingerprint.is_empty() {
+                            None
+                        } else {
+                            Some(device.fingerprint.clone())
+                        };
+                        (
+                            SocketAddr::new(device.ip, device.port),
+                            fp,
+                            Some(device.hostname.clone()),
+                        )
                     }
                     None => {
                         info!("No device selected, exiting.");
@@ -107,19 +109,13 @@ async fn main() -> Result<()> {
             save_dir,
         } => {
             let save_dir = save_dir
-                .or_else(|| {
-                    config::AppConfig::load()
-                        .ok()
-                        .map(|c| c.default_save_dir)
-                })
+                .or_else(|| config::AppConfig::load().ok().map(|c| c.default_save_dir))
                 .unwrap_or_else(|| std::path::PathBuf::from("./downloaded"));
 
             let (addr, expected_fingerprint, peer_name) = if let Some(ref target) = from {
-                let addr: SocketAddr = target
-                    .parse()
-                    .map_err(|_| {
-                        anyhow::anyhow!("Invalid address '{}'. Use format: ip:port", target)
-                    })?;
+                let addr: SocketAddr = target.parse().map_err(|_| {
+                    anyhow::anyhow!("Invalid address '{}'. Use format: ip:port", target)
+                })?;
                 // Manual address — no mDNS fingerprint; TOFU prompt handled in download_files
                 (addr, None, None)
             } else {
@@ -131,8 +127,16 @@ async fn main() -> Result<()> {
                 match selected {
                     Some(idx) => {
                         let device = &devices[idx];
-                        let fp = if device.fingerprint.is_empty() { None } else { Some(device.fingerprint.clone()) };
-                        (SocketAddr::new(device.ip, device.port), fp, Some(device.hostname.clone()))
+                        let fp = if device.fingerprint.is_empty() {
+                            None
+                        } else {
+                            Some(device.fingerprint.clone())
+                        };
+                        (
+                            SocketAddr::new(device.ip, device.port),
+                            fp,
+                            Some(device.hostname.clone()),
+                        )
                     }
                     None => {
                         info!("No device selected, exiting.");
@@ -141,7 +145,14 @@ async fn main() -> Result<()> {
                 }
             };
 
-            transfer::downloader::download_files(addr, remote_path, save_dir, expected_fingerprint, peer_name).await
+            transfer::downloader::download_files(
+                addr,
+                remote_path,
+                save_dir,
+                expected_fingerprint,
+                peer_name,
+            )
+            .await
         }
 
         Commands::Config { action } => {
@@ -155,17 +166,13 @@ async fn main() -> Result<()> {
                 ConfigAction::Show => {
                     let cfg = config::AppConfig::load()?;
                     let fp = crypto::certs::local_fingerprint()?;
-                    println!();
-                    println!("  +--------------------------------------------------+");
-                    println!("  |  Device Configuration                             |");
-                    println!("  |--------------------------------------------------|");
-                    println!("  |  Name:        {:<36} |", cfg.effective_device_name());
-                    println!("  |  Fingerprint: {}...  |", &fp[..36]);
-                    println!("  |  Port:        {:<36} |", cfg.default_port);
-                    println!("  |  Save Dir:    {:<36} |", cfg.default_save_dir.display());
-                    println!("  |  Peers:       {:<36} |", format!("{} trusted device(s)", cfg.trusted_peers.len()));
-                    println!("  +--------------------------------------------------+");
-                    println!();
+                    ui::print_device_config(
+                        &cfg.effective_device_name(),
+                        &fp,
+                        cfg.default_port,
+                        &cfg.default_save_dir.display().to_string(),
+                        cfg.trusted_peers.len(),
+                    );
                 }
             }
             Ok(())
@@ -175,10 +182,8 @@ async fn main() -> Result<()> {
             match action {
                 DevicesAction::List => {
                     let cfg = config::AppConfig::load()?;
-                    let peers: Vec<(String, config::TrustedPeer)> = cfg
-                        .trusted_peers
-                        .into_iter()
-                        .collect();
+                    let peers: Vec<(String, config::TrustedPeer)> =
+                        cfg.trusted_peers.into_iter().collect();
                     ui::print_trusted_devices(&peers);
                 }
                 DevicesAction::Revoke { identifier } => {

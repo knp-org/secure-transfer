@@ -1,4 +1,4 @@
-use console::style;
+use console::{Term, measure_text_width, style};
 use dialoguer::{Confirm, MultiSelect, Select};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::time::Duration;
@@ -11,21 +11,13 @@ use crate::transfer::protocol::{BrowseResponse, RequestType, TransferManifest};
 // Custom spinner frames for different phases
 // ────────────────────────────────────────────────────────────────
 
-const SPINNER_TRANSFER: &[&str] = &[
-    "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
-];
+const SPINNER_TRANSFER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-const SPINNER_QUANTUM: &[&str] = &[
-    "◐", "◓", "◑", "◒", "◐", "◓", "◑", "◒",
-];
+const SPINNER_QUANTUM: &[&str] = &["◐", "◓", "◑", "◒", "◐", "◓", "◑", "◒"];
 
-const SPINNER_SCANNING: &[&str] = &[
-    "∙∙∙", "●∙∙", "∙●∙", "∙∙●", "∙∙∙", "●∙∙", "∙●∙", "∙∙●",
-];
+const SPINNER_SCANNING: &[&str] = &["∙∙∙", "●∙∙", "∙●∙", "∙∙●", "∙∙∙", "●∙∙", "∙●∙", "∙∙●"];
 
-const SPINNER_FILES: &[&str] = &[
-    "▹▹▹", "▸▹▹", "▹▸▹", "▹▹▸", "▸▸▹", "▹▸▸", "▸▸▸", "▹▹▹",
-];
+const SPINNER_FILES: &[&str] = &["▹▹▹", "▸▹▹", "▹▸▹", "▹▹▸", "▸▸▹", "▹▸▸", "▸▸▸", "▹▹▹"];
 
 // ────────────────────────────────────────────────────────────────
 // BrowseAction enum
@@ -43,6 +35,35 @@ pub enum BrowseAction {
     Download,
     /// Cancel and quit
     Quit,
+}
+
+enum CardTone {
+    Cyan,
+    Green,
+    Yellow,
+}
+
+enum CardStyle {
+    Normal,
+    Bold,
+    Dim,
+    Accent,
+    Success,
+    Warning,
+    Danger,
+}
+
+enum CardRow {
+    Text {
+        text: String,
+        style: CardStyle,
+    },
+    KeyValue {
+        label: String,
+        value: String,
+        value_style: CardStyle,
+    },
+    Divider,
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -148,24 +169,16 @@ impl TransferProgress {
                 .tick_strings(SPINNER_TRANSFER),
         );
         status_pb.enable_steady_tick(Duration::from_millis(100));
-        status_pb.set_message(format!(
-            "{}",
-            style("Starting transfer...").cyan()
-        ));
+        status_pb.set_message(format!("{}", style("Starting transfer...").cyan()));
 
         // Per-file progress (middle)
         let file_pb = multi.add(ProgressBar::new(0));
         file_pb.set_style(
-            ProgressStyle::with_template(
-                "  {spinner:.dim} {msg}"
-            )
-            .unwrap()
-            .tick_strings(&["|", "|", "|", "|"]),
+            ProgressStyle::with_template("  {spinner:.dim} {msg}")
+                .unwrap()
+                .tick_strings(&["|", "|", "|", "|"]),
         );
-        file_pb.set_message(format!(
-            "{}",
-            style("Waiting for first file...").dim()
-        ));
+        file_pb.set_message(format!("{}", style("Waiting for first file...").dim()));
 
         // Overall progress bar (bottom) — the main visual
         let overall = multi.add(ProgressBar::new(total_size));
@@ -229,14 +242,16 @@ impl TransferProgress {
             "~".to_string()
         };
 
-        self.status_pb.set_style(ProgressStyle::with_template("  {msg}").unwrap());
+        self.status_pb
+            .set_style(ProgressStyle::with_template("  {msg}").unwrap());
         self.status_pb.finish_with_message(format!(
             "{}  {}",
             style("[ok]").green().bold(),
             style("Transfer complete!").green().bold()
         ));
 
-        self.file_pb.set_style(ProgressStyle::with_template("  {msg}").unwrap());
+        self.file_pb
+            .set_style(ProgressStyle::with_template("  {msg}").unwrap());
         self.file_pb.finish_with_message(format!(
             "  {} {} files  |  {} transferred  |  {}/s avg",
             style("`-").dim(),
@@ -246,11 +261,9 @@ impl TransferProgress {
         ));
 
         self.overall.set_style(
-            ProgressStyle::with_template(
-                "  {wide_bar:.green} {msg}"
-            )
-            .unwrap()
-            .progress_chars("━━╸─"),
+            ProgressStyle::with_template("  {wide_bar:.green} {msg}")
+                .unwrap()
+                .progress_chars("━━╸─"),
         );
         self.overall.finish_with_message(format!(
             "{} in {:.1}s",
@@ -278,6 +291,226 @@ pub fn create_transfer_progress(total_size: u64, total_files: u64) -> (ProgressB
     (overall, file_pb)
 }
 
+fn terminal_content_width(preferred: usize) -> usize {
+    let (_, width) = Term::stdout().size();
+    let usable = usize::from(width).saturating_sub(6);
+    usable.clamp(42, preferred)
+}
+
+fn tone_border(tone: &CardTone, text: String) -> String {
+    match tone {
+        CardTone::Cyan => format!("{}", style(text).cyan()),
+        CardTone::Green => format!("{}", style(text).green()),
+        CardTone::Yellow => format!("{}", style(text).yellow()),
+    }
+}
+
+fn render_card_style(text: &str, style_kind: &CardStyle) -> String {
+    match style_kind {
+        CardStyle::Normal => format!("{}", style(text).white()),
+        CardStyle::Bold => format!("{}", style(text).white().bold()),
+        CardStyle::Dim => format!("{}", style(text).dim()),
+        CardStyle::Accent => format!("{}", style(text).cyan().bold()),
+        CardStyle::Success => format!("{}", style(text).green().bold()),
+        CardStyle::Warning => format!("{}", style(text).yellow().bold()),
+        CardStyle::Danger => format!("{}", style(text).red().bold()),
+    }
+}
+
+fn wrap_text(text: &str, width: usize) -> Vec<String> {
+    if text.is_empty() {
+        return vec![String::new()];
+    }
+
+    let mut lines = Vec::new();
+    let mut current = String::new();
+
+    for word in text.split_whitespace() {
+        let word_width = measure_text_width(word);
+        if word_width > width {
+            if !current.is_empty() {
+                lines.push(current);
+                current = String::new();
+            }
+
+            let mut chunk = String::new();
+            for ch in word.chars() {
+                let candidate = format!("{chunk}{ch}");
+                if measure_text_width(&candidate) > width && !chunk.is_empty() {
+                    lines.push(chunk);
+                    chunk = ch.to_string();
+                } else {
+                    chunk.push(ch);
+                }
+            }
+            if !chunk.is_empty() {
+                current = chunk;
+            }
+            continue;
+        }
+
+        let candidate = if current.is_empty() {
+            word.to_string()
+        } else {
+            format!("{current} {word}")
+        };
+
+        if measure_text_width(&candidate) > width && !current.is_empty() {
+            lines.push(current);
+            current = word.to_string();
+        } else {
+            current = candidate;
+        }
+    }
+
+    if !current.is_empty() {
+        lines.push(current);
+    }
+
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
+}
+
+fn pad_visible(text: &str, width: usize) -> String {
+    let padding = width.saturating_sub(measure_text_width(text));
+    format!("{text}{}", " ".repeat(padding))
+}
+
+fn print_card(title: &str, tone: CardTone, preferred_width: usize, rows: &[CardRow]) {
+    let inner_width = terminal_content_width(preferred_width);
+    let label_width = rows
+        .iter()
+        .filter_map(|row| match row {
+            CardRow::KeyValue { label, .. } => Some(measure_text_width(label)),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0)
+        .min(14);
+
+    println!();
+    println!(
+        "  {}",
+        tone_border(&tone, format!("╭{}╮", "─".repeat(inner_width + 2)))
+    );
+    println!(
+        "  {} {} {}",
+        tone_border(&tone, "│".to_string()),
+        pad_visible(&render_card_style(title, &CardStyle::Bold), inner_width),
+        tone_border(&tone, "│".to_string())
+    );
+    println!(
+        "  {}",
+        tone_border(&tone, format!("├{}┤", "─".repeat(inner_width + 2)))
+    );
+
+    for row in rows {
+        match row {
+            CardRow::Divider => {
+                println!(
+                    "  {}",
+                    tone_border(&tone, format!("├{}┤", "─".repeat(inner_width + 2)))
+                );
+            }
+            CardRow::Text { text, style } => {
+                for line in wrap_text(text, inner_width) {
+                    println!(
+                        "  {} {} {}",
+                        tone_border(&tone, "│".to_string()),
+                        pad_visible(&render_card_style(&line, style), inner_width),
+                        tone_border(&tone, "│".to_string())
+                    );
+                }
+            }
+            CardRow::KeyValue {
+                label,
+                value,
+                value_style,
+            } => {
+                let value_width = inner_width.saturating_sub(label_width + 1).max(10);
+                let wrapped = wrap_text(value, value_width);
+                for (idx, line) in wrapped.iter().enumerate() {
+                    let label_text = if idx == 0 {
+                        format!(
+                            "{} ",
+                            pad_visible(&render_card_style(label, &CardStyle::Dim), label_width)
+                        )
+                    } else {
+                        " ".repeat(label_width + 1)
+                    };
+                    let content = format!("{label_text}{}", render_card_style(line, value_style));
+                    println!(
+                        "  {} {} {}",
+                        tone_border(&tone, "│".to_string()),
+                        pad_visible(&content, inner_width),
+                        tone_border(&tone, "│".to_string())
+                    );
+                }
+            }
+        }
+    }
+
+    println!(
+        "  {}",
+        tone_border(&tone, format!("╰{}╯", "─".repeat(inner_width + 2)))
+    );
+    println!();
+}
+
+pub fn print_device_config(
+    device_name: &str,
+    fingerprint: &str,
+    port: u16,
+    save_dir: &str,
+    trusted_devices: usize,
+) {
+    let fingerprint_display = if fingerprint.len() > 24 {
+        format!(
+            "{}…{}",
+            &fingerprint[..12],
+            &fingerprint[fingerprint.len() - 10..]
+        )
+    } else {
+        fingerprint.to_string()
+    };
+
+    print_card(
+        "Device Configuration",
+        CardTone::Cyan,
+        72,
+        &[
+            CardRow::KeyValue {
+                label: "Name".to_string(),
+                value: device_name.to_string(),
+                value_style: CardStyle::Accent,
+            },
+            CardRow::KeyValue {
+                label: "Fingerprint".to_string(),
+                value: fingerprint_display,
+                value_style: CardStyle::Dim,
+            },
+            CardRow::KeyValue {
+                label: "Port".to_string(),
+                value: port.to_string(),
+                value_style: CardStyle::Bold,
+            },
+            CardRow::KeyValue {
+                label: "Save Dir".to_string(),
+                value: save_dir.to_string(),
+                value_style: CardStyle::Normal,
+            },
+            CardRow::KeyValue {
+                label: "Peers".to_string(),
+                value: format!("{trusted_devices} trusted device(s)"),
+                value_style: CardStyle::Success,
+            },
+        ],
+    );
+}
+
 // ────────────────────────────────────────────────────────────────
 // Transfer summary banner
 // ────────────────────────────────────────────────────────────────
@@ -296,46 +529,38 @@ pub fn print_transfer_summary(
         "instant".to_string()
     };
 
-    println!();
-    println!("  {}", style("+---------------------------------------------+").green());
-    println!("  {}  {}  {}",
-        style("|").green(),
-        style(format!("[ok] {} Complete", direction)).green().bold(),
-        style("                        |").green()
+    print_card(
+        &format!("[ok] {} Complete", direction),
+        CardTone::Green,
+        68,
+        &[
+            CardRow::KeyValue {
+                label: "Files".to_string(),
+                value: format!("{files} file(s)"),
+                value_style: CardStyle::Bold,
+            },
+            CardRow::KeyValue {
+                label: "Size".to_string(),
+                value: format_size(bytes),
+                value_style: CardStyle::Bold,
+            },
+            CardRow::KeyValue {
+                label: "Speed".to_string(),
+                value: speed,
+                value_style: CardStyle::Accent,
+            },
+            CardRow::KeyValue {
+                label: "Time".to_string(),
+                value: format!("{elapsed_secs:.2}s"),
+                value_style: CardStyle::Normal,
+            },
+            CardRow::KeyValue {
+                label: "Dest".to_string(),
+                value: destination.to_string(),
+                value_style: CardStyle::Normal,
+            },
+        ],
     );
-    println!("  {}", style("|---------------------------------------------|").green());
-    println!("  {}  {}  {:<38} {}",
-        style("|").green(),
-        style("Files:").dim(),
-        format!("{} file(s)", files),
-        style("|").green()
-    );
-    println!("  {}  {}  {:<38} {}",
-        style("|").green(),
-        style("Size: ").dim(),
-        format_size(bytes),
-        style("|").green()
-    );
-    println!("  {}  {}  {:<38} {}",
-        style("|").green(),
-        style("Speed:").dim(),
-        speed,
-        style("|").green()
-    );
-    println!("  {}  {}  {:<38} {}",
-        style("|").green(),
-        style("Time: ").dim(),
-        format!("{:.2}s", elapsed_secs),
-        style("|").green()
-    );
-    println!("  {}  {}  {:<38} {}",
-        style("|").green(),
-        style("Dest: ").dim(),
-        truncate_str(destination, 38),
-        style("|").green()
-    );
-    println!("  {}", style("+---------------------------------------------+").green());
-    println!();
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -346,8 +571,13 @@ pub fn print_transfer_summary(
 pub fn select_device(devices: &[DiscoveredDevice]) -> Option<usize> {
     if devices.is_empty() {
         println!();
-        println!("  {}  {}", style("[err]").red().bold(), style("No devices found on the network.").red());
-        println!("  {}  Make sure the receiver is running: {}",
+        println!(
+            "  {}  {}",
+            style("[err]").red().bold(),
+            style("No devices found on the network.").red()
+        );
+        println!(
+            "  {}  Make sure the receiver is running: {}",
             style(" ").dim(),
             style("secure-transfer listen").yellow().bold()
         );
@@ -358,26 +588,28 @@ pub fn select_device(devices: &[DiscoveredDevice]) -> Option<usize> {
         .iter()
         .map(|d| {
             format!(
-                "{}  {}  {}:{}  {}  [{}...]",
+                "{}  {}  {}:{}  {}",
                 style(">>").cyan(),
                 style(&d.hostname).white().bold(),
                 style(d.ip).yellow(),
                 style(d.port).yellow(),
-                style("|").dim(),
-                style(&d.fingerprint[..std::cmp::min(12, d.fingerprint.len())]).dim()
+                style(short_fingerprint(&d.fingerprint, 12)).dim()
             )
         })
         .collect();
 
-    println!();
-    println!("  {}", style("+-------------------------------------------+").cyan());
-    println!("  {}  {}                      {}",
-        style("|").cyan(),
-        style("Discovered Devices").white().bold(),
-        style("|").cyan()
+    print_card(
+        "Discovered Devices",
+        CardTone::Cyan,
+        64,
+        &[CardRow::Text {
+            text: format!(
+                "{} device(s) found. Choose a target and we’ll connect using the discovered address.",
+                devices.len()
+            ),
+            style: CardStyle::Dim,
+        }],
     );
-    println!("  {}", style("+-------------------------------------------+").cyan());
-    println!();
 
     Select::new()
         .with_prompt("  Select target device")
@@ -390,44 +622,41 @@ pub fn select_device(devices: &[DiscoveredDevice]) -> Option<usize> {
 
 /// Prompt user to confirm an incoming file transfer
 pub fn confirm_transfer(manifest: &TransferManifest) -> std::io::Result<bool> {
-    println!();
-    println!("  {}", style("+-----------------------------------------------+").cyan());
-    println!("  {}  {}  {}",
-        style("|").cyan(),
-        style("Incoming Transfer").white().bold(),
-        style("                            |").cyan()
+    print_card(
+        "Incoming Transfer",
+        CardTone::Cyan,
+        70,
+        &[
+            CardRow::KeyValue {
+                label: "From".to_string(),
+                value: manifest.sender_hostname.clone(),
+                value_style: CardStyle::Warning,
+            },
+            CardRow::KeyValue {
+                label: "Files".to_string(),
+                value: format!("{} file(s)", manifest.total_files),
+                value_style: CardStyle::Normal,
+            },
+            CardRow::KeyValue {
+                label: "Size".to_string(),
+                value: format_size(manifest.total_size),
+                value_style: CardStyle::Bold,
+            },
+            CardRow::KeyValue {
+                label: "Encryption".to_string(),
+                value: if manifest.quantum_safe {
+                    "Quantum-safe (X25519MLKEM768)".to_string()
+                } else {
+                    "Classical TLS only".to_string()
+                },
+                value_style: if manifest.quantum_safe {
+                    CardStyle::Success
+                } else {
+                    CardStyle::Warning
+                },
+            },
+        ],
     );
-    println!("  {}", style("|-----------------------------------------------|").cyan());
-    println!("  {}  {} {:<42}{}",
-        style("|").cyan(),
-        style("From: ").dim(),
-        style(&manifest.sender_hostname).yellow().bold(),
-        style("|").cyan()
-    );
-    println!("  {}  {} {:<42}{}",
-        style("|").cyan(),
-        style("Files:").dim(),
-        style(format!("{} file(s)", manifest.total_files)).white(),
-        style("|").cyan()
-    );
-    println!("  {}  {} {:<42}{}",
-        style("|").cyan(),
-        style("Size: ").dim(),
-        style(format_size(manifest.total_size)).white().bold(),
-        style("|").cyan()
-    );
-    println!("  {}  {} {:<42}{}",
-        style("|").cyan(),
-        style("Enc:  ").dim(),
-        if manifest.quantum_safe {
-            format!("{}", style("[ok] Quantum-Safe (X25519MLKEM768)").green())
-        } else {
-            format!("{}", style("[!!] Classical TLS only").yellow())
-        },
-        style("|").cyan()
-    );
-    println!("  {}", style("+-----------------------------------------------+").cyan());
-    println!();
 
     let accepted = Confirm::new()
         .with_prompt("  Accept transfer?")
@@ -440,44 +669,41 @@ pub fn confirm_transfer(manifest: &TransferManifest) -> std::io::Result<bool> {
 
 /// Prompt user to confirm a download before receiving files
 pub fn confirm_download(manifest: &TransferManifest) -> std::io::Result<bool> {
-    println!();
-    println!("  {}", style("+-----------------------------------------------+").cyan());
-    println!("  {}  {}  {}",
-        style("|").cyan(),
-        style("Download Summary").white().bold(),
-        style("                             |").cyan()
+    print_card(
+        "Download Summary",
+        CardTone::Cyan,
+        70,
+        &[
+            CardRow::KeyValue {
+                label: "From".to_string(),
+                value: manifest.sender_hostname.clone(),
+                value_style: CardStyle::Warning,
+            },
+            CardRow::KeyValue {
+                label: "Files".to_string(),
+                value: format!("{} file(s)", manifest.total_files),
+                value_style: CardStyle::Normal,
+            },
+            CardRow::KeyValue {
+                label: "Size".to_string(),
+                value: format_size(manifest.total_size),
+                value_style: CardStyle::Bold,
+            },
+            CardRow::KeyValue {
+                label: "Encryption".to_string(),
+                value: if manifest.quantum_safe {
+                    "Quantum-safe (X25519MLKEM768)".to_string()
+                } else {
+                    "Classical TLS only".to_string()
+                },
+                value_style: if manifest.quantum_safe {
+                    CardStyle::Success
+                } else {
+                    CardStyle::Warning
+                },
+            },
+        ],
     );
-    println!("  {}", style("|-----------------------------------------------|").cyan());
-    println!("  {}  {} {:<42}{}",
-        style("|").cyan(),
-        style("From: ").dim(),
-        style(&manifest.sender_hostname).yellow().bold(),
-        style("|").cyan()
-    );
-    println!("  {}  {} {:<42}{}",
-        style("|").cyan(),
-        style("Files:").dim(),
-        style(format!("{} file(s)", manifest.total_files)).white(),
-        style("|").cyan()
-    );
-    println!("  {}  {} {:<42}{}",
-        style("|").cyan(),
-        style("Size: ").dim(),
-        style(format_size(manifest.total_size)).white().bold(),
-        style("|").cyan()
-    );
-    println!("  {}  {} {:<42}{}",
-        style("|").cyan(),
-        style("Enc:  ").dim(),
-        if manifest.quantum_safe {
-            format!("{}", style("[ok] Quantum-Safe (X25519MLKEM768)").green())
-        } else {
-            format!("{}", style("[!!] Classical TLS only").yellow())
-        },
-        style("|").cyan()
-    );
-    println!("  {}", style("+-----------------------------------------------+").cyan());
-    println!();
 
     let accepted = Confirm::new()
         .with_prompt("  Start download?")
@@ -493,41 +719,23 @@ pub fn browse_remote_files(
     response: &BrowseResponse,
     selected_so_far: &[String],
 ) -> std::io::Result<BrowseAction> {
-    println!();
-    println!("  {}", style("+-----------------------------------------------+").cyan());
-    println!("  {}  {}                                    {}",
-        style("|").cyan(),
-        style("Remote Files").white().bold(),
-        style("|").cyan()
-    );
-    println!("  {}", style("|-----------------------------------------------|").cyan());
-    if response.current_path.is_empty() {
-        println!("  {}  {} {:<40}{}",
-            style("|").cyan(),
-            style("Location:").dim(),
-            style("/ (shared roots)").yellow(),
-            style("|").cyan()
-        );
-    } else {
-        println!(
-            "  {}  {} {:<40}{}",
-            style("|").cyan(),
-            style("Location:").dim(),
-            style(truncate_str(&response.current_path, 40)).yellow(),
-            style("|").cyan()
-        );
-    }
+    let mut rows = vec![CardRow::KeyValue {
+        label: "Location".to_string(),
+        value: if response.current_path.is_empty() {
+            "/ (shared roots)".to_string()
+        } else {
+            response.current_path.clone()
+        },
+        value_style: CardStyle::Warning,
+    }];
     if !selected_so_far.is_empty() {
-        println!(
-            "  {}  {} {:<40}{}",
-            style("|").cyan(),
-            style("Selected:").dim(),
-            style(format!("{} item(s) [ok]", selected_so_far.len())).green(),
-            style("|").cyan()
-        );
+        rows.push(CardRow::KeyValue {
+            label: "Selected".to_string(),
+            value: format!("{} item(s) ready for download", selected_so_far.len()),
+            value_style: CardStyle::Success,
+        });
     }
-    println!("  {}", style("+-----------------------------------------------+").cyan());
-    println!();
+    print_card("Remote Files", CardTone::Cyan, 72, &rows);
 
     // Build menu items
     let mut menu_items: Vec<String> = Vec::new();
@@ -546,7 +754,10 @@ pub fn browse_remote_files(
     }
 
     // Action options
-    menu_items.push(format!("{}", style("─────────────────────────────────").dim()));
+    menu_items.push(format!(
+        "{}",
+        style("─────────────────────────────────").dim()
+    ));
     action_map.push("separator");
 
     menu_items.push("[*] Select files to download".to_string());
@@ -573,50 +784,49 @@ pub fn browse_remote_files(
 
     match selection {
         None => Ok(BrowseAction::Quit),
-        Some(idx) => {
-            match action_map[idx] {
-                "back" => Ok(BrowseAction::GoBack),
-                "entry" => {
-                    let offset = if response.current_path.is_empty() { 0 } else { 1 };
-                    let entry_idx = idx - offset;
-                    let entry = &response.entries[entry_idx];
+        Some(idx) => match action_map[idx] {
+            "back" => Ok(BrowseAction::GoBack),
+            "entry" => {
+                let offset = if response.current_path.is_empty() {
+                    0
+                } else {
+                    1
+                };
+                let entry_idx = idx - offset;
+                let entry = &response.entries[entry_idx];
 
-                    if entry.is_dir {
-                        Ok(BrowseAction::EnterDirectory(entry.relative_path.clone()))
-                    } else {
-                        Ok(BrowseAction::SelectFiles(vec![entry.relative_path.clone()]))
-                    }
+                if entry.is_dir {
+                    Ok(BrowseAction::EnterDirectory(entry.relative_path.clone()))
+                } else {
+                    Ok(BrowseAction::SelectFiles(vec![entry.relative_path.clone()]))
                 }
-                "select" => {
-                    let items: Vec<String> = response
-                        .entries
-                        .iter()
-                        .map(|e| format!("{}", e))
-                        .collect();
-
-                    if items.is_empty() {
-                        println!("  {}  No files to select.", style(">>").dim());
-                        return Ok(BrowseAction::GoBack);
-                    }
-
-                    let selections = MultiSelect::new()
-                        .with_prompt("  Select files/folders (space to toggle, enter to confirm)")
-                        .items(&items)
-                        .interact()
-                        .map_err(std::io::Error::other)?;
-
-                    let paths: Vec<String> = selections
-                        .iter()
-                        .map(|&i| response.entries[i].relative_path.clone())
-                        .collect();
-
-                    Ok(BrowseAction::SelectFiles(paths))
-                }
-                "download" => Ok(BrowseAction::Download),
-                "quit" => Ok(BrowseAction::Quit),
-                _ => Ok(BrowseAction::Quit),
             }
-        }
+            "select" => {
+                let items: Vec<String> =
+                    response.entries.iter().map(|e| format!("{}", e)).collect();
+
+                if items.is_empty() {
+                    println!("  {}  No files to select.", style(">>").dim());
+                    return Ok(BrowseAction::GoBack);
+                }
+
+                let selections = MultiSelect::new()
+                    .with_prompt("  Select files/folders (space to toggle, enter to confirm)")
+                    .items(&items)
+                    .interact()
+                    .map_err(std::io::Error::other)?;
+
+                let paths: Vec<String> = selections
+                    .iter()
+                    .map(|&i| response.entries[i].relative_path.clone())
+                    .collect();
+
+                Ok(BrowseAction::SelectFiles(paths))
+            }
+            "download" => Ok(BrowseAction::Download),
+            "quit" => Ok(BrowseAction::Quit),
+            _ => Ok(BrowseAction::Quit),
+        },
     }
 }
 
@@ -627,18 +837,15 @@ pub fn browse_remote_files(
 /// Display the certificate fingerprint for verification
 #[allow(dead_code)]
 pub fn print_fingerprint(fingerprint: &str) {
-    println!();
-    println!("  {}", style("+----------------------------------------------------+").cyan());
-    println!("  {}  {}                             {}",
-        style("|").cyan(),
-        style("Certificate Fingerprint").white().bold(),
-        style("|").cyan()
+    print_card(
+        "Certificate Fingerprint",
+        CardTone::Cyan,
+        76,
+        &[CardRow::Text {
+            text: fingerprint.to_string(),
+            style: CardStyle::Dim,
+        }],
     );
-    println!("  {}", style("|----------------------------------------------------|").cyan());
-    println!("  {}  {}  {}", style("|").cyan(), &fingerprint[..48], style("|").cyan());
-    println!("  {}  {}          {}", style("|").cyan(), &fingerprint[48..], style("|").cyan());
-    println!("  {}", style("+----------------------------------------------------+").cyan());
-    println!();
 }
 
 /// Format bytes into a human-readable size string (public version)
@@ -671,6 +878,14 @@ fn truncate_str(s: &str, max_len: usize) -> String {
     }
 }
 
+fn short_fingerprint(fingerprint: &str, prefix_len: usize) -> String {
+    if fingerprint.len() <= prefix_len {
+        fingerprint.to_string()
+    } else {
+        format!("{}...", &fingerprint[..prefix_len])
+    }
+}
+
 // ────────────────────────────────────────────────────────────────
 // Access Control Prompts
 // ────────────────────────────────────────────────────────────────
@@ -699,58 +914,28 @@ pub fn prompt_verify_fingerprint(fingerprint: &str, peer_name: &str) -> std::io:
         .collect::<Vec<_>>()
         .join(" ");
 
-    println!();
-    println!("  {}", style("+-----------------------------------------------+").yellow());
-    println!(
-        "  {}  {}  {}",
-        style("|").yellow(),
-        style("New Device — Verify Fingerprint").white().bold(),
-        style("         |").yellow()
+    print_card(
+        "New Device - Verify Fingerprint",
+        CardTone::Yellow,
+        76,
+        &[
+            CardRow::KeyValue {
+                label: "Device".to_string(),
+                value: peer_name.to_string(),
+                value_style: CardStyle::Accent,
+            },
+            CardRow::Divider,
+            CardRow::Text {
+                text: fp_grouped,
+                style: CardStyle::Dim,
+            },
+            CardRow::Divider,
+            CardRow::Text {
+                text: "Verify this fingerprint matches the receiver before trusting it. Once trusted, future connections will be verified automatically.".to_string(),
+                style: CardStyle::Dim,
+            },
+        ],
     );
-    println!("  {}", style("|-----------------------------------------------|").yellow());
-    println!(
-        "  {}  {} {:<40}{}",
-        style("|").yellow(),
-        style("Device: ").dim(),
-        style(peer_name).cyan().bold(),
-        style("|").yellow()
-    );
-    println!("  {}", style("|-----------------------------------------------|").yellow());
-    println!(
-        "  {}  {}{}",
-        style("|").yellow(),
-        style(format!("  {}", &fp_grouped[..fp_grouped.len().min(46)])).dim(),
-        style("|").yellow()
-    );
-    if fp_grouped.len() > 46 {
-        println!(
-            "  {}  {}{}",
-            style("|").yellow(),
-            style(format!("  {}", &fp_grouped[46..])).dim(),
-            style("|").yellow()
-        );
-    }
-    println!("  {}", style("|-----------------------------------------------|").yellow());
-    println!(
-        "  {}  {}{}",
-        style("|").yellow(),
-        style("Verify this fingerprint matches the receiver   ").dim(),
-        style("|").yellow()
-    );
-    println!(
-        "  {}  {}{}",
-        style("|").yellow(),
-        style("before trusting. Once trusted, future          ").dim(),
-        style("|").yellow()
-    );
-    println!(
-        "  {}  {}{}",
-        style("|").yellow(),
-        style("connections will be verified automatically.    ").dim(),
-        style("|").yellow()
-    );
-    println!("  {}", style("+-----------------------------------------------+").yellow());
-    println!();
 
     let confirmed = Confirm::new()
         .with_prompt("  Trust this device?")
@@ -776,38 +961,7 @@ pub fn prompt_access_grant(
         RequestType::Download => "Download Files",
     };
 
-    let fp_display = if fingerprint.len() > 12 {
-        format!("{}...", &fingerprint[..12])
-    } else {
-        fingerprint.to_string()
-    };
-
-    println!();
-    println!("  {}", style("+-----------------------------------------------+").yellow());
-    println!("  {}  {}  {}",
-        style("|").yellow(),
-        style("Access Request").white().bold(),
-        style("                                |\n").yellow()
-    );
-    println!("  {}", style("|-----------------------------------------------|").yellow());
-    println!("  {}  {} {:<40}{}",
-        style("|").yellow(),
-        style("Device: ").dim(),
-        style(peer_name).cyan().bold(),
-        style("|").yellow()
-    );
-    println!("  {}  {} {:<40}{}",
-        style("|").yellow(),
-        style("ID:     ").dim(),
-        style(&fp_display).dim(),
-        style("|").yellow()
-    );
-    println!("  {}  {} {:<40}{}",
-        style("|").yellow(),
-        style("Request:").dim(),
-        style(request_label).white().bold(),
-        style("|").yellow()
-    );
+    let fp_display = short_fingerprint(fingerprint, 12);
     // Option 2 label and scope depend on the request type so we don't save
     // SendOnly scope for a device that is asking to Browse or Download.
     let (opt2_label, opt2_scope) = match request_type {
@@ -815,35 +969,48 @@ pub fn prompt_access_grant(
             "Trust this device for browsing & downloads",
             AccessScope::SharedReadOnly,
         ),
-        RequestType::Send => (
-            "Trust this device for file sends",
-            AccessScope::SendOnly,
-        ),
+        RequestType::Send => ("Trust this device for file sends", AccessScope::SendOnly),
     };
 
-    println!("  {}", style("|-----------------------------------------------|").yellow());
-    println!("  {}  {}                            {}",
-        style("|").yellow(),
-        style("1. Allow this request only").white(),
-        style("|").yellow()
+    print_card(
+        "Access Request",
+        CardTone::Yellow,
+        76,
+        &[
+            CardRow::KeyValue {
+                label: "Device".to_string(),
+                value: peer_name.to_string(),
+                value_style: CardStyle::Accent,
+            },
+            CardRow::KeyValue {
+                label: "ID".to_string(),
+                value: fp_display,
+                value_style: CardStyle::Dim,
+            },
+            CardRow::KeyValue {
+                label: "Request".to_string(),
+                value: request_label.to_string(),
+                value_style: CardStyle::Bold,
+            },
+            CardRow::Divider,
+            CardRow::Text {
+                text: "1. Allow this request only".to_string(),
+                style: CardStyle::Normal,
+            },
+            CardRow::Text {
+                text: format!("2. {opt2_label}"),
+                style: CardStyle::Normal,
+            },
+            CardRow::Text {
+                text: "3. Trust this device with full access".to_string(),
+                style: CardStyle::Normal,
+            },
+            CardRow::Text {
+                text: "4. Deny access".to_string(),
+                style: CardStyle::Danger,
+            },
+        ],
     );
-    println!("  {}  {:<44}{}",
-        style("|").yellow(),
-        style(format!("2. {}", opt2_label)).white(),
-        style("|").yellow()
-    );
-    println!("  {}  {}{}",
-        style("|").yellow(),
-        style("3. Trust this device with full access").white(),
-        style("  |").yellow()
-    );
-    println!("  {}  {}                                  {}",
-        style("|").yellow(),
-        style("4. Deny access").red(),
-        style("|").yellow()
-    );
-    println!("  {}", style("+-----------------------------------------------+").yellow());
-    println!();
 
     let items = vec![
         "Allow this request only",
@@ -890,15 +1057,14 @@ pub fn prompt_access_grant(
     };
 
     if decision.granted {
-        println!("  {}  Access approved: {} ({})",
+        println!(
+            "  {}  Access approved: {} ({})",
             style("[ok]").green().bold(),
             style(format!("{}", decision.scope)).green(),
             style(format!("{}", decision.duration)).dim()
         );
     } else {
-        println!("  {}  Access request denied",
-            style("[!!]").red().bold()
-        );
+        println!("  {}  Access request denied", style("[!!]").red().bold());
     }
 
     Ok(decision)
@@ -908,43 +1074,43 @@ pub fn prompt_access_grant(
 pub fn print_trusted_devices(peers: &[(String, crate::config::TrustedPeer)]) {
     if peers.is_empty() {
         println!();
-        println!("  {}  {}", style("[info]").cyan().bold(), style("No trusted devices found.").dim());
+        println!(
+            "  {}  {}",
+            style("[info]").cyan().bold(),
+            style("No trusted devices found.").dim()
+        );
         println!();
         return;
     }
 
-    println!();
-    println!("  {}", style("+--------------------------------------------------------------+").cyan());
-    println!("  {}  {}                                                  {}",
-        style("|").cyan(),
-        style("Trusted Devices").white().bold(),
-        style("|").cyan()
-    );
-    println!("  {}", style("|--------------------------------------------------------------|").cyan());
-
-    for (fingerprint, peer) in peers {
-        let fp_short = if fingerprint.len() > 12 {
-            format!("{}...", &fingerprint[..12])
-        } else {
-            fingerprint.clone()
-        };
-
-        println!("  {}  {} {:<20} {} {:<14} {} {:<12} {} {:<10} {}",
-            style("|").cyan(),
-            style("Name:").dim(),
-            style(&peer.name).white().bold(),
-            style("|").dim(),
-            style(&fp_short).dim(),
-            style("|").dim(),
-            style(format!("{}", peer.scope)).yellow(),
-            style("|").dim(),
-            style(format!("{}", peer.duration)).dim(),
-            style("|").cyan()
-        );
+    let mut rows = Vec::new();
+    for (idx, (fingerprint, peer)) in peers.iter().enumerate() {
+        if idx > 0 {
+            rows.push(CardRow::Divider);
+        }
+        rows.push(CardRow::KeyValue {
+            label: "Name".to_string(),
+            value: peer.name.clone(),
+            value_style: CardStyle::Accent,
+        });
+        rows.push(CardRow::KeyValue {
+            label: "ID".to_string(),
+            value: short_fingerprint(fingerprint, 12),
+            value_style: CardStyle::Dim,
+        });
+        rows.push(CardRow::KeyValue {
+            label: "Scope".to_string(),
+            value: format!("{}", peer.scope),
+            value_style: CardStyle::Warning,
+        });
+        rows.push(CardRow::KeyValue {
+            label: "Duration".to_string(),
+            value: format!("{}", peer.duration),
+            value_style: CardStyle::Normal,
+        });
     }
 
-    println!("  {}", style("+--------------------------------------------------------------+").cyan());
-    println!();
+    print_card("Trusted Devices", CardTone::Cyan, 76, &rows);
 }
 
 pub enum RevokeSelection {
@@ -959,7 +1125,11 @@ pub fn select_device_to_revoke(
 ) -> std::io::Result<RevokeSelection> {
     if peers.is_empty() {
         println!();
-        println!("  {}  {}", style("[info]").cyan().bold(), style("No trusted devices found.").dim());
+        println!(
+            "  {}  {}",
+            style("[info]").cyan().bold(),
+            style("No trusted devices found.").dim()
+        );
         println!();
         return Ok(RevokeSelection::Cancel);
     }
@@ -1004,45 +1174,61 @@ pub fn select_device_to_revoke(
 pub fn print_history(records: &[crate::history::TransactionRecord], limit: usize) {
     if records.is_empty() {
         println!();
-        println!("  {}  {}", style("[info]").cyan().bold(), style("No transaction history found.").dim());
+        println!(
+            "  {}  {}",
+            style("[info]").cyan().bold(),
+            style("No transaction history found.").dim()
+        );
         println!();
         return;
     }
 
     let display_records: Vec<_> = records.iter().rev().take(limit).collect();
 
-    println!();
-    println!("  {}", style("+----------------------------------------------------------------------+").cyan());
-    println!("  {}  {} ({} most recent)                                  {}",
-        style("|").cyan(),
-        style("Transaction History").white().bold(),
-        display_records.len(),
-        style("|").cyan()
-    );
-    println!("  {}", style("|----------------------------------------------------------------------|").cyan());
+    let mut rows = vec![CardRow::Text {
+        text: format!("Showing {} most recent item(s)", display_records.len()),
+        style: CardStyle::Dim,
+    }];
 
     for record in &display_records {
-        let status_styled = match record.status.as_str() {
-            "Success" => style(&record.status).green(),
-            "Denied" => style(&record.status).red(),
-            _ => style(&record.status).yellow(),
-        };
-
-        println!("  {}  {} {} {} {:<12} {} {:<20} {} {:<10} {} {}",
-            style("|").cyan(),
-            style(&record.timestamp[..19]).dim(),
-            style("|").dim(),
-            style(&record.action).white().bold(),
-            "",
-            style("|").dim(),
-            truncate_str(&record.peer_name, 20),
-            style("|").dim(),
-            status_styled,
-            style("|").dim(),
-            style(format_size_pub(record.bytes_transferred)).dim()
-        );
+        rows.push(CardRow::Divider);
+        rows.push(CardRow::KeyValue {
+            label: "When".to_string(),
+            value: record.timestamp[..19].to_string(),
+            value_style: CardStyle::Dim,
+        });
+        rows.push(CardRow::KeyValue {
+            label: "Action".to_string(),
+            value: record.action.clone(),
+            value_style: CardStyle::Bold,
+        });
+        rows.push(CardRow::KeyValue {
+            label: "Peer".to_string(),
+            value: record.peer_name.clone(),
+            value_style: CardStyle::Accent,
+        });
+        rows.push(CardRow::KeyValue {
+            label: "Status".to_string(),
+            value: record.status.clone(),
+            value_style: match record.status.as_str() {
+                "Success" => CardStyle::Success,
+                "Denied" => CardStyle::Danger,
+                _ => CardStyle::Warning,
+            },
+        });
+        rows.push(CardRow::KeyValue {
+            label: "Bytes".to_string(),
+            value: format_size_pub(record.bytes_transferred),
+            value_style: CardStyle::Normal,
+        });
+        if !record.target_paths.is_empty() {
+            rows.push(CardRow::KeyValue {
+                label: "Target".to_string(),
+                value: truncate_str(&record.target_paths.join(", "), 120),
+                value_style: CardStyle::Dim,
+            });
+        }
     }
 
-    println!("  {}", style("+----------------------------------------------------------------------+").cyan());
-    println!();
+    print_card("Transaction History", CardTone::Cyan, 82, &rows);
 }
