@@ -159,13 +159,28 @@ pub async fn download_files(
         ui::format_size_pub(manifest.total_size)
     );
 
-    // Accept
+    let accepted = ui::confirm_download(&manifest)?;
+
     let ack = Ack {
-        status: AckStatus::Ok,
+        status: if accepted {
+            AckStatus::Ok
+        } else {
+            AckStatus::Rejected
+        },
         checksum: String::new(),
-        message: "Accepted".to_string(),
+        message: if accepted {
+            "Accepted".to_string()
+        } else {
+            "Download cancelled by user".to_string()
+        },
     };
     protocol::write_frame(&mut tls_stream, &ack).await?;
+
+    if !accepted {
+        info!("Download cancelled by user");
+        tls_stream.shutdown().await?;
+        return Ok(());
+    }
 
     // Create progress bar
     let (overall_pb, _) = ui::create_transfer_progress(manifest.total_size, manifest.total_files);

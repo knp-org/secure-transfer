@@ -438,6 +438,56 @@ pub fn confirm_transfer(manifest: &TransferManifest) -> std::io::Result<bool> {
     Ok(accepted)
 }
 
+/// Prompt user to confirm a download before receiving files
+pub fn confirm_download(manifest: &TransferManifest) -> std::io::Result<bool> {
+    println!();
+    println!("  {}", style("+-----------------------------------------------+").cyan());
+    println!("  {}  {}  {}",
+        style("|").cyan(),
+        style("Download Summary").white().bold(),
+        style("                             |").cyan()
+    );
+    println!("  {}", style("|-----------------------------------------------|").cyan());
+    println!("  {}  {} {:<42}{}",
+        style("|").cyan(),
+        style("From: ").dim(),
+        style(&manifest.sender_hostname).yellow().bold(),
+        style("|").cyan()
+    );
+    println!("  {}  {} {:<42}{}",
+        style("|").cyan(),
+        style("Files:").dim(),
+        style(format!("{} file(s)", manifest.total_files)).white(),
+        style("|").cyan()
+    );
+    println!("  {}  {} {:<42}{}",
+        style("|").cyan(),
+        style("Size: ").dim(),
+        style(format_size(manifest.total_size)).white().bold(),
+        style("|").cyan()
+    );
+    println!("  {}  {} {:<42}{}",
+        style("|").cyan(),
+        style("Enc:  ").dim(),
+        if manifest.quantum_safe {
+            format!("{}", style("[ok] Quantum-Safe (X25519MLKEM768)").green())
+        } else {
+            format!("{}", style("[!!] Classical TLS only").yellow())
+        },
+        style("|").cyan()
+    );
+    println!("  {}", style("+-----------------------------------------------+").cyan());
+    println!();
+
+    let accepted = Confirm::new()
+        .with_prompt("  Start download?")
+        .default(true)
+        .interact()
+        .unwrap_or(false);
+
+    Ok(accepted)
+}
+
 /// Interactive file browser for remote devices
 pub fn browse_remote_files(
     response: &BrowseResponse,
