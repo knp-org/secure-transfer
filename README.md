@@ -1,19 +1,19 @@
-# 🛡️ secure-transfer
+# secure-transfer
 
 **Quantum-safe secure file transfer over LAN**
 
 A blazing-fast CLI tool for securely transferring files between devices on your local network, protected by post-quantum cryptography.
 
-## ✨ Features
+## Features
 
-- **🔍 Auto-Discovery** — Finds devices on your LAN via mDNS (zero-config)
-- **🛡️ Quantum-Safe Encryption** — X25519MLKEM768 hybrid key exchange (NIST FIPS 203)
-- **📁 Multi-File & Directory** — Send files, directories, or both recursively
-- **✅ Integrity Verification** — SHA-256 checksums for every file
-- **📊 Progress Tracking** — Real-time progress bar with transfer speed
-- **🔒 Trust On First Use** — SSH-like certificate fingerprint verification
+- **Auto-Discovery** — Finds devices on your LAN via mDNS (zero-config)
+- **Quantum-Safe Encryption** — X25519MLKEM768 hybrid key exchange (NIST FIPS 203)
+- **Multi-File & Directory** — Send files, directories, or both recursively
+- **Integrity Verification** — SHA-256 checksums for every file
+- **Progress Tracking** — Real-time progress bar with transfer speed
+- **Trust On First Use** — SSH-like certificate fingerprint verification
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Receiver (machine that accepts files)
 ```bash
@@ -42,7 +42,7 @@ secure-transfer send ./src/ ./README.md ./Cargo.toml
 secure-transfer send ./file.txt --to 192.168.1.42:9876
 ```
 
-## 🔐 Security
+## Security
 
 ### Quantum-Safe Key Exchange
 All connections use **X25519MLKEM768** — a hybrid key exchange combining:
@@ -67,16 +67,11 @@ On first run, the app generates a self-signed TLS certificate stored in `~/.conf
 └──────────────────────────────────────────────┘
 ```
 
-## 📦 Installation
+## Installation
 
 ### One-liner (pre-built binary)
 ```bash
 curl -fsSL https://raw.githubusercontent.com/knp-org/secure-transfer/main/install.sh | sh
-```
-
-### From crates.io
-```bash
-cargo install secure-transfer
 ```
 
 ### From GitHub (source)
@@ -96,28 +91,30 @@ cargo install --path .
 - From source: Rust 1.75+
 - Both sender and receiver must be on the same local network
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 src/
-├── main.rs              # Entry point, CLI dispatch
-├── cli.rs               # clap command definitions
-├── config.rs            # App config & cert storage
-├── ui.rs                # Interactive prompts & progress
+├── main.rs              # Entry point, command dispatch, runtime setup
+├── cli.rs               # clap command and subcommand definitions
+├── config.rs            # Persistent app config, trust policy, shared paths
+├── history.rs           # Transaction history persistence and timestamps
+├── ui.rs                # Interactive prompts, status cards, progress output
 ├── crypto/
 │   ├── mod.rs
-│   └── certs.rs         # TLS cert gen & quantum-safe config
+│   └── certs.rs         # TLS certificate generation and fingerprint helpers
 ├── discovery/
 │   ├── mod.rs
-│   ├── advertise.rs     # mDNS service registration
-│   └── browse.rs        # mDNS device browsing
+│   ├── advertise.rs     # mDNS advertisement for receivers
+│   └── browse.rs        # mDNS browsing and peer discovery
 └── transfer/
     ├── mod.rs
-    ├── protocol.rs      # Wire protocol frames
-    ├── sender.rs        # File sending logic
-    └── receiver.rs      # File receiving logic
+    ├── protocol.rs      # Wire protocol frames, manifests, browse/download types
+    ├── sender.rs        # Push-based file sending flow
+    ├── receiver.rs      # Incoming connection handling and access control
+    └── downloader.rs    # Browse-and-pull download flow from remote peers
 ```
 
-## 📄 License
+## License
 
 GNU Affero General Public License v3.0 only (AGPL-3.0-only)
