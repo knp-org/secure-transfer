@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use mdns_sd::{ServiceDaemon, ServiceEvent};
+use std::collections::HashSet;
 use std::time::Duration;
 use tracing::{debug, info};
 
@@ -21,6 +22,7 @@ pub fn browse_devices(timeout: Option<Duration>) -> Result<Vec<DiscoveredDevice>
         .context("Failed to start mDNS browsing")?;
 
     let mut devices = Vec::new();
+    let mut seen = HashSet::new();
 
     info!("🔍 Scanning for devices ({:.0}s)…", timeout.as_secs_f64());
 
@@ -62,8 +64,13 @@ pub fn browse_devices(timeout: Option<Duration>) -> Result<Vec<DiscoveredDevice>
                         fingerprint,
                     };
 
-                    debug!("Found device: {}", device);
-                    devices.push(device);
+                    // mdns-sd may emit multiple resolve events for the same
+                    // service while records settle; only keep one listing.
+                    let key = (device.ip, device.port, device.fingerprint.clone());
+                    if seen.insert(key) {
+                        debug!("Found device: {}", device);
+                        devices.push(device);
+                    }
                 }
             }
             Ok(ServiceEvent::SearchStarted(_)) => {
