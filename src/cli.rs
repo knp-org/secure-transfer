@@ -60,6 +60,16 @@ pub enum Commands {
         save_dir: Option<PathBuf>,
     },
 
+    /// Send a text message directly to another device
+    Text {
+        /// The text message to send
+        message: String,
+
+        /// Send directly to a specific address (ip:port)
+        #[arg(short, long)]
+        to: Option<String>,
+    },
+
     /// Manage device configuration
     Config {
         #[command(subcommand)]

@@ -15,7 +15,7 @@ use crate::history::{self, TransactionRecord};
 use crate::transfer::protocol::{
     self, Ack, AckStatus, BrowseEntry, BrowseRequest, BrowseResponse, CHUNK_SIZE,
     ConnectionRequest, DownloadRequest, FileHeader, RequestType, TransferManifest, TransferSummary,
-    MAX_TRANSFER_ENTRIES,
+    TextMessage, MAX_TRANSFER_ENTRIES,
 };
 use crate::ui;
 
@@ -265,6 +265,7 @@ async fn handle_connection(
             )
             .await
         }
+        RequestType::Text => handle_text(tls_stream, &peer_name, &peer_fingerprint).await,
     }
 }
 
@@ -715,6 +716,75 @@ async fn handle_download(
         "[ok] Download complete: {} files, {} bytes",
         total_files, total_size
     );
+    tls_stream.shutdown().await?;
+    Ok(())
+}
+
+/// Handle an incoming text message
+async fn handle_text(
+    mut tls_stream: tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
+    peer_name: &str,
+    peer_fingerprint: &str,
+) -> Result<()> {
+    // Read the text message
+    let text_msg: TextMessage = protocol::read_frame(&mut tls_stream).await?;
+
+    info!(
+        "Incoming text message from '{}' ({} chars)",
+        text_msg.sender_hostname,
+        text_msg.content.len()
+    );
+
+    // Access has already been authorized by handle_connection's access-control
+    // gate, so we only need a lightweight content confirmation here.
+    let accepted = ui::confirm_text_message(&text_msg.sender_hostname, text_msg.content.len())?;
+
+    if !accepted {
+        info!("Text message from '{}' rejected", text_msg.sender_hostname);
+        let ack = Ack {
+            status: AckStatus::Rejected,
+            checksum: String::new(),
+            message: "Text message rejected by user".to_string(),
+        };
+        protocol::write_frame(&mut tls_stream, &ack).await?;
+
+        // Log denied text
+        let _ = history::append_record(&TransactionRecord {
+            timestamp: history::now_timestamp(),
+            peer_name: peer_name.to_string(),
+            peer_fingerprint: peer_fingerprint.to_string(),
+            action: "Text".to_string(),
+            target_paths: vec!["<text message>".to_string()],
+            bytes_transferred: 0,
+            status: "Denied".to_string(),
+        });
+
+        return Ok(());
+    }
+
+    // Send acknowledgment
+    let ack = Ack {
+        status: AckStatus::Ok,
+        checksum: String::new(),
+        message: "OK".to_string(),
+    };
+    protocol::write_frame(&mut tls_stream, &ack).await?;
+
+    // Display the text message
+    ui::print_text_message(&text_msg.sender_hostname, &text_msg.content);
+
+    // Log successful text — truncate at char boundary to avoid panics on multi-byte UTF-8
+    let preview: String = text_msg.content.chars().take(20).collect();
+    let _ = history::append_record(&TransactionRecord {
+        timestamp: history::now_timestamp(),
+        peer_name: peer_name.to_string(),
+        peer_fingerprint: peer_fingerprint.to_string(),
+        action: "Text".to_string(),
+        target_paths: vec![format!("Text: {preview}...")],
+        bytes_transferred: text_msg.content.len() as u64,
+        status: "Success".to_string(),
+    });
+
     tls_stream.shutdown().await?;
     Ok(())
 }

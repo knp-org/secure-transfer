@@ -782,6 +782,81 @@ pub fn confirm_download(manifest: &TransferManifest) -> std::io::Result<bool> {
     Ok(accepted)
 }
 
+/// Prompt user to confirm an incoming text message
+pub fn confirm_text_message(sender: &str, length: usize) -> std::io::Result<bool> {
+    print_card(
+        "Incoming Text",
+        CardTone::Cyan,
+        64,
+        &[
+            CardRow::KeyValue {
+                label: "From".to_string(),
+                value: sender.to_string(),
+                value_style: CardStyle::Accent,
+            },
+            CardRow::KeyValue {
+                label: "Length".to_string(),
+                value: format!("{length} characters"),
+                value_style: CardStyle::Normal,
+            },
+        ],
+    );
+
+    let accepted = Confirm::new()
+        .with_prompt("  Accept and view message?")
+        .default(true)
+        .interact()
+        .unwrap_or(false);
+
+    Ok(accepted)
+}
+
+/// Display a received text message in a card and offer to copy it
+pub fn print_text_message(sender: &str, content: &str) {
+    print_card(
+        "Message Received",
+        CardTone::Green,
+        72,
+        &[
+            CardRow::KeyValue {
+                label: "Sender".to_string(),
+                value: sender.to_string(),
+                value_style: CardStyle::Accent,
+            },
+            CardRow::Divider,
+            CardRow::Text {
+                text: content.to_string(),
+                style: CardStyle::Normal,
+            },
+        ],
+    );
+
+    // Offer to copy to clipboard
+    let should_copy = Confirm::new()
+        .with_prompt("  Copy to clipboard?")
+        .default(true)
+        .interact()
+        .unwrap_or(false);
+
+    if should_copy {
+        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(content)) {
+            Ok(()) => {
+                println!(
+                    "  {}  Copied to clipboard!",
+                    style("[ok]").green().bold()
+                );
+            }
+            Err(e) => {
+                println!(
+                    "  {}  Could not copy: {}",
+                    style("[err]").red().bold(),
+                    e
+                );
+            }
+        }
+    }
+}
+
 /// Interactive file browser for remote devices
 pub fn browse_remote_files(
     response: &BrowseResponse,
@@ -1027,6 +1102,7 @@ pub fn prompt_access_grant(
         RequestType::Send => "Send Files",
         RequestType::Browse => "Browse Files",
         RequestType::Download => "Download Files",
+        RequestType::Text => "Send Text Message",
     };
 
     let fp_display = short_fingerprint(fingerprint, 12);
@@ -1037,7 +1113,7 @@ pub fn prompt_access_grant(
             "Trust this device for browsing & downloads",
             AccessScope::SharedReadOnly,
         ),
-        RequestType::Send => ("Trust this device for file sends", AccessScope::SendOnly),
+        RequestType::Send | RequestType::Text => ("Trust this device for file sends & text", AccessScope::SendOnly),
     };
 
     print_card(
@@ -1103,7 +1179,7 @@ pub fn prompt_access_grant(
         0 => {
             // Accept once — scope matches the current request type
             let scope = match request_type {
-                RequestType::Send => AccessScope::SendOnly,
+                RequestType::Send | RequestType::Text => AccessScope::SendOnly,
                 RequestType::Browse | RequestType::Download => AccessScope::SharedReadOnly,
             };
             AccessDecision {

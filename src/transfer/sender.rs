@@ -13,7 +13,7 @@ use crate::crypto::certs;
 use crate::history::{self, TransactionRecord};
 use crate::transfer::protocol::{
     self, Ack, AckStatus, CHUNK_SIZE, ConnectionRequest, FileHeader, RequestType, TransferManifest,
-    TransferSummary,
+    TransferSummary, TextMessage,
 };
 use crate::ui;
 
@@ -304,6 +304,135 @@ pub async fn send_files(
 
     // Show transfer summary
     ui::print_transfer_summary("Send", files_sent, bytes_sent, elapsed, &addr.to_string());
+
+    tls_stream.shutdown().await?;
+    Ok(())
+}
+
+/// Truncate a string to at most `max_chars` characters (safe for multi-byte UTF-8).
+fn truncate_text(s: &str, max_chars: usize) -> &str {
+    match s.char_indices().nth(max_chars) {
+        Some((idx, _)) => &s[..idx],
+        None => s,
+    }
+}
+
+/// Send a short text message to a remote receiver.
+pub async fn send_text(
+    message: String,
+    addr: SocketAddr,
+    expected_fingerprint: Option<String>,
+    peer_name: Option<String>,
+) -> Result<()> {
+    // Show connecting animation
+    let conn_sp = ui::show_connecting_spinner(&addr.to_string());
+
+    // Connect via TLS
+    let tls_config = certs::build_client_config(expected_fingerprint.clone())?;
+    let connector = TlsConnector::from(tls_config);
+    let tcp_stream = TcpStream::connect(addr)
+        .await
+        .with_context(|| format!("Failed to connect to {}", addr))?;
+
+    let server_name = rustls::pki_types::ServerName::try_from("secure-transfer.local")
+        .map_err(|e| anyhow::anyhow!("Invalid server name: {}", e))?;
+
+    let mut tls_stream = connector
+        .connect(server_name, tcp_stream)
+        .await
+        .context("TLS handshake failed")?;
+
+    ui::finish_spinner_success(&conn_sp, "Quantum-safe TLS 1.3 connection established");
+
+    // TOFU for manual connections
+    if expected_fingerprint.is_none() {
+        let server_fp = {
+            let (_, rustls_conn) = tls_stream.get_ref();
+            rustls_conn
+                .peer_certificates()
+                .and_then(|certs| certs.first())
+                .map(|cert| certs::cert_fingerprint(cert.as_ref()))
+        };
+
+        let server_fp =
+            server_fp.context("Could not extract server certificate after TLS handshake")?;
+
+        let app_config = config::AppConfig::load().unwrap_or_default();
+        if !app_config.is_trusted(&server_fp) {
+            let addr_str = addr.to_string();
+            let display_name = peer_name.as_deref().unwrap_or(&addr_str);
+            if !ui::prompt_verify_fingerprint(&server_fp, display_name)? {
+                anyhow::bail!("Connection aborted — receiver fingerprint rejected");
+            }
+            let mut cfg = config::AppConfig::load().unwrap_or_default();
+            cfg.add_trusted_peer(
+                server_fp.clone(),
+                TrustedPeer {
+                    name: display_name.to_string(),
+                    fingerprint: server_fp.clone(),
+                    scope: AccessScope::FullAccess,
+                    duration: AccessDuration::Persistent,
+                    last_seen: history::now_timestamp(),
+                },
+            )?;
+        }
+    }
+
+    // Get our identity
+    let hostname = config::AppConfig::load()
+        .map(|c| c.effective_device_name())
+        .unwrap_or_else(|_| {
+            hostname::get()
+                .map(|h| h.to_string_lossy().to_string())
+                .unwrap_or_else(|_| "unknown".to_string())
+        });
+
+    let local_fingerprint = certs::local_fingerprint().unwrap_or_default();
+
+    // Send connection handshake
+    let conn_req = ConnectionRequest {
+        request_type: RequestType::Text,
+        hostname: hostname.clone(),
+        fingerprint: local_fingerprint,
+    };
+    protocol::write_frame(&mut tls_stream, &conn_req).await?;
+
+    // Send text message
+    let text_msg = TextMessage {
+        sender_hostname: hostname,
+        content: message.clone(),
+    };
+    protocol::write_frame(&mut tls_stream, &text_msg).await?;
+
+    // Wait for acknowledgment
+    let ack: Ack = protocol::read_frame(&mut tls_stream).await?;
+    if ack.status == AckStatus::Rejected {
+        // Log denied send
+        let _ = history::append_record(&TransactionRecord {
+            timestamp: history::now_timestamp(),
+            peer_name: addr.to_string(),
+            peer_fingerprint: String::new(),
+            action: "Text".to_string(),
+            target_paths: vec!["<text message>".to_string()],
+            bytes_transferred: 0,
+            status: "Denied".to_string(),
+        });
+        anyhow::bail!("Text message rejected by receiver: {}", ack.message);
+    }
+
+    // Show summary
+    println!("  {}  Text message sent successfully!", console::style("[ok]").green().bold());
+
+    // Log successful send
+    let _ = history::append_record(&TransactionRecord {
+        timestamp: history::now_timestamp(),
+        peer_name: addr.to_string(),
+        peer_fingerprint: String::new(),
+        action: "Text".to_string(),
+        target_paths: vec![format!("Text: {}...", truncate_text(&message, 20))],
+        bytes_transferred: message.len() as u64,
+        status: "Success".to_string(),
+    });
 
     tls_stream.shutdown().await?;
     Ok(())

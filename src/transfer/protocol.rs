@@ -43,6 +43,15 @@ pub struct FileHeader {
     pub checksum: String,
 }
 
+/// Text message frame — used for direct text transfers
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextMessage {
+    /// Name of the sending device
+    pub sender_hostname: String,
+    /// The text content
+    pub content: String,
+}
+
 /// Acknowledgment frame — sent by receiver
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ack {
@@ -80,6 +89,8 @@ pub enum RequestType {
     Browse,
     /// Download specific files from remote
     Download,
+    /// Send a text message
+    Text,
 }
 
 impl RequestType {
@@ -91,6 +102,7 @@ impl RequestType {
             RequestType::Send => "Send",
             RequestType::Browse => "Browse",
             RequestType::Download => "Download",
+            RequestType::Text => "Text",
         }
     }
 }

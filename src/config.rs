@@ -205,6 +205,7 @@ impl AppConfig {
             (scope, request_type),
             (AccessScope::FullAccess, _)
                 | (AccessScope::SendOnly, RequestType::Send)
+                | (AccessScope::SendOnly, RequestType::Text)
                 | (AccessScope::SharedReadOnly, RequestType::Browse)
                 | (AccessScope::SharedReadOnly, RequestType::Download)
         )
