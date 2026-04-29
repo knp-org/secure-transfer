@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use sha2::Digest;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -12,7 +13,7 @@ use crate::config::{self, AccessDuration, AccessScope, TrustedPeer};
 use crate::crypto::certs;
 use crate::history::{self, TransactionRecord};
 use crate::transfer::protocol::{
-    self, Ack, AckStatus, CHUNK_SIZE, ConnectionRequest, FileHeader, RequestType, TransferManifest,
+    self, Ack, AckStatus, CHUNK_SIZE, ConnectionRequest, FileFooter, FileHeader, RequestType, TransferManifest,
     TransferSummary, TextMessage,
 };
 use crate::ui;
@@ -227,13 +228,7 @@ pub async fn send_files(
 
     // Send each entry
     for entry in &entries {
-        // Compute checksum for files; show hashing indicator so the UI doesn't freeze
-        let checksum = if entry.is_dir {
-            String::new()
-        } else {
-            progress.start_hashing(&entry.relative_path, files_sent + 1, entry.size);
-            protocol::compute_file_checksum(&entry.absolute_path).await?
-        };
+        let checksum = String::new();
 
         // Send file header
         let header = FileHeader {
@@ -252,6 +247,7 @@ pub async fn send_files(
             let mut file = tokio::fs::File::open(&entry.absolute_path).await?;
             let mut remaining = entry.size;
             let mut buf = vec![0u8; CHUNK_SIZE];
+            let mut hasher = protocol::checksum_hasher();
 
             while remaining > 0 {
                 let to_read = std::cmp::min(remaining as usize, CHUNK_SIZE);
@@ -260,10 +256,17 @@ pub async fn send_files(
                     break;
                 }
                 tls_stream.write_all(&buf[..n]).await?;
+                hasher.update(&buf[..n]);
                 remaining -= n as u64;
                 bytes_sent += n as u64;
                 progress.set_bytes(bytes_sent);
             }
+
+            let computed_checksum = protocol::finalize_checksum(hasher);
+            let footer = FileFooter {
+                checksum: computed_checksum,
+            };
+            protocol::write_frame(&mut tls_stream, &footer).await?;
 
             // Wait for per-file ack
             let file_ack: Ack = protocol::read_frame(&mut tls_stream).await?;

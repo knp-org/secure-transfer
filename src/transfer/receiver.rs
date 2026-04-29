@@ -409,14 +409,16 @@ async fn handle_send(
 
         // Verify checksum — reject files that omit it entirely (size > 0 requires a checksum)
         let computed_checksum = protocol::finalize_checksum(hasher);
-        let checksum_ok = if header.size > 0 && header.checksum.is_empty() {
+        let footer: protocol::FileFooter = protocol::read_frame(&mut tls_stream).await?;
+
+        let checksum_ok = if header.size > 0 && footer.checksum.is_empty() {
             warn!(
                 "Sender omitted checksum for non-empty file '{}' — rejecting",
                 header.relative_path
             );
             false
         } else {
-            header.checksum.is_empty() || computed_checksum == header.checksum
+            footer.checksum.is_empty() || computed_checksum == footer.checksum
         };
 
         let file_ack = if checksum_ok {
@@ -438,7 +440,7 @@ async fn handle_send(
         } else {
             warn!(
                 "[err] Checksum mismatch for '{}': expected {}, got {}",
-                header.relative_path, header.checksum, computed_checksum
+                header.relative_path, footer.checksum, computed_checksum
             );
             Ack {
                 status: AckStatus::Error,
@@ -533,8 +535,8 @@ async fn handle_browse(
 
             // Security: validate path is within shared dirs (unless unrestricted).
             // Use canonicalize so symlinks inside a shared dir cannot point outside it.
-            if !unrestricted {
-                if !is_within_share_dirs(&req_path, share_dirs).await {
+            if !unrestricted
+                && !is_within_share_dirs(&req_path, share_dirs).await {
                     let response = BrowseResponse {
                         current_path: browse_req.path,
                         entries: vec![],
@@ -542,7 +544,6 @@ async fn handle_browse(
                     protocol::write_frame(&mut tls_stream, &response).await?;
                     continue;
                 }
-            }
 
             list_directory(&req_path)?
         };
@@ -579,15 +580,14 @@ async fn handle_download(
 
         // Security: validate path is within shared dirs (unless unrestricted).
         // Use canonicalize so symlinks inside a shared dir cannot point outside it.
-        if !unrestricted {
-            if !is_within_share_dirs(&path, share_dirs).await {
+        if !unrestricted
+            && !is_within_share_dirs(&path, share_dirs).await {
                 warn!(
                     "Download request denied for path outside share: {}",
                     req_path
                 );
                 continue;
             }
-        }
 
         if path.is_file() {
             let size = std::fs::metadata(&path)?.len();
@@ -665,11 +665,7 @@ async fn handle_download(
 
     // Send each file
     for (abs_path, rel_path, size, is_dir) in &entries {
-        let checksum = if *is_dir {
-            String::new()
-        } else {
-            protocol::compute_file_checksum(abs_path).await?
-        };
+        let checksum = String::new();
 
         let header = FileHeader {
             relative_path: rel_path.clone(),
@@ -684,6 +680,7 @@ async fn handle_download(
             let mut file = tokio::fs::File::open(abs_path).await?;
             let mut remaining = *size;
             let mut buf = vec![0u8; CHUNK_SIZE];
+            let mut hasher = protocol::checksum_hasher();
 
             while remaining > 0 {
                 let to_read = std::cmp::min(remaining as usize, CHUNK_SIZE);
@@ -692,8 +689,15 @@ async fn handle_download(
                     break;
                 }
                 tls_stream.write_all(&buf[..n]).await?;
+                hasher.update(&buf[..n]);
                 remaining -= n as u64;
             }
+
+            let computed_checksum = protocol::finalize_checksum(hasher);
+            let footer = protocol::FileFooter {
+                checksum: computed_checksum,
+            };
+            protocol::write_frame(&mut tls_stream, &footer).await?;
 
             // Wait for per-file ack
             let _file_ack: Ack = protocol::read_frame(&mut tls_stream).await?;

@@ -12,7 +12,7 @@ use crate::crypto::certs;
 use crate::history::{self, TransactionRecord};
 use crate::transfer::protocol::{
     self, Ack, AckStatus, BrowseRequest, BrowseResponse, CHUNK_SIZE, ConnectionRequest,
-    DownloadRequest, FileHeader, RequestType, TransferManifest,
+    DownloadRequest, FileFooter, FileHeader, RequestType, TransferManifest,
 };
 use crate::ui;
 
@@ -302,15 +302,17 @@ pub async fn download_files(
         file.flush().await?;
 
         let computed = protocol::finalize_checksum(hasher);
-        // Reject files that omit the checksum entirely — size > 0 requires integrity verification
-        let ok = if header.size > 0 && header.checksum.is_empty() {
+        let footer: FileFooter = protocol::read_frame(&mut tls_stream).await?;
+        
+        // Check integrity using footer
+        let ok = if header.size > 0 && footer.checksum.is_empty() {
             warn!(
                 "Server omitted checksum for non-empty file '{}' — rejecting",
                 header.relative_path
             );
             false
         } else {
-            header.checksum.is_empty() || computed == header.checksum
+            footer.checksum.is_empty() || computed == footer.checksum
         };
 
         let file_ack = Ack {

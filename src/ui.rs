@@ -75,7 +75,7 @@ pub fn show_connecting_spinner(addr: &str) -> ProgressBar {
     let sp = ProgressBar::new_spinner();
     sp.set_style(
         ProgressStyle::with_template("  {spinner} {msg}")
-            .unwrap()
+            .expect("valid progress template")
             .tick_strings(SPINNER_QUANTUM),
     );
     sp.enable_steady_tick(Duration::from_millis(150));
@@ -92,7 +92,7 @@ pub fn show_scanning_spinner() -> ProgressBar {
     let sp = ProgressBar::new_spinner();
     sp.set_style(
         ProgressStyle::with_template("  {spinner} {msg}")
-            .unwrap()
+            .expect("valid progress template")
             .tick_strings(SPINNER_SCANNING),
     );
     sp.enable_steady_tick(Duration::from_millis(200));
@@ -108,7 +108,7 @@ pub fn show_preparing_spinner(total_files: u64, total_size: u64) -> ProgressBar 
     let sp = ProgressBar::new_spinner();
     sp.set_style(
         ProgressStyle::with_template("  {spinner} {msg}")
-            .unwrap()
+            .expect("valid progress template")
             .tick_strings(SPINNER_FILES),
     );
     sp.enable_steady_tick(Duration::from_millis(200));
@@ -123,7 +123,7 @@ pub fn show_preparing_spinner(total_files: u64, total_size: u64) -> ProgressBar 
 
 /// Finish a spinner with a success message
 pub fn finish_spinner_success(sp: &ProgressBar, msg: &str) {
-    sp.set_style(ProgressStyle::with_template("  {msg}").unwrap());
+    sp.set_style(ProgressStyle::with_template("  {msg}").expect("valid progress template"));
     sp.finish_with_message(format!(
         "{}  {}",
         style("[ok]").green().bold(),
@@ -134,7 +134,7 @@ pub fn finish_spinner_success(sp: &ProgressBar, msg: &str) {
 /// Finish a spinner with an error message
 #[allow(dead_code)]
 pub fn finish_spinner_error(sp: &ProgressBar, msg: &str) {
-    sp.set_style(ProgressStyle::with_template("  {msg}").unwrap());
+    sp.set_style(ProgressStyle::with_template("  {msg}").expect("valid progress template"));
     sp.finish_with_message(format!(
         "{}  {}",
         style("[err]").red().bold(),
@@ -165,7 +165,7 @@ impl TransferProgress {
         let status_pb = multi.add(ProgressBar::new_spinner());
         status_pb.set_style(
             ProgressStyle::with_template("  {spinner} {msg}")
-                .unwrap()
+                .expect("valid progress template")
                 .tick_strings(SPINNER_TRANSFER),
         );
         status_pb.enable_steady_tick(Duration::from_millis(100));
@@ -175,7 +175,7 @@ impl TransferProgress {
         let file_pb = multi.add(ProgressBar::new(0));
         file_pb.set_style(
             ProgressStyle::with_template("  {spinner:.dim} {msg}")
-                .unwrap()
+                .expect("valid progress template")
                 .tick_strings(&["|", "|", "|", "|"]),
         );
         file_pb.set_message(format!("{}", style("Waiting for first file...").dim()));
@@ -189,7 +189,7 @@ impl TransferProgress {
                 style("@").dim(),
                 style("~").dim()
             ))
-            .unwrap()
+            .expect("valid progress template")
             .progress_chars("━━╸─"),
         );
 
@@ -202,21 +202,7 @@ impl TransferProgress {
         }
     }
 
-    /// Show hashing indicator before checksum computation (phase before transfer)
-    pub fn start_hashing(&self, file_name: &str, file_num: u64, file_size: u64) {
-        self.status_pb.set_message(format!(
-            "{}  Hashing file {}/{} {}",
-            style("##").yellow().bold(),
-            style(file_num).yellow().bold(),
-            style(self.total_files).yellow(),
-            style(format!("({})", format_size(file_size))).dim()
-        ));
-        self.file_pb.set_message(format!(
-            "  {} {}",
-            style("~>").yellow(),
-            style(truncate_str(file_name, 60)).white()
-        ));
-    }
+
 
     /// Update progress when starting a new file
     pub fn start_file(&self, file_name: &str, file_num: u64, file_size: u64) {
@@ -259,7 +245,7 @@ impl TransferProgress {
         };
 
         self.status_pb
-            .set_style(ProgressStyle::with_template("  {msg}").unwrap());
+            .set_style(ProgressStyle::with_template("  {msg}").expect("valid progress template"));
         self.status_pb.finish_with_message(format!(
             "{}  {}",
             style("[ok]").green().bold(),
@@ -267,7 +253,7 @@ impl TransferProgress {
         ));
 
         self.file_pb
-            .set_style(ProgressStyle::with_template("  {msg}").unwrap());
+            .set_style(ProgressStyle::with_template("  {msg}").expect("valid progress template"));
         self.file_pb.finish_with_message(format!(
             "  {} {} files  |  {} transferred  |  {}/s avg",
             style("`-").dim(),
@@ -278,7 +264,7 @@ impl TransferProgress {
 
         self.overall.set_style(
             ProgressStyle::with_template("  {wide_bar:.green} {msg}")
-                .unwrap()
+                .expect("valid progress template")
                 .progress_chars("━━╸─"),
         );
         self.overall.finish_with_message(format!(
@@ -297,7 +283,7 @@ pub fn create_transfer_progress(total_size: u64, total_files: u64) -> (ProgressB
             "  {} [{{elapsed_precise}}] [{{wide_bar:.cyan/dark.gray}}] {{bytes}}/{{total_bytes}} ({{bytes_per_sec}}) {{msg}}",
             style(">>").cyan().bold()
         ))
-        .unwrap()
+        .expect("valid progress template")
         .progress_chars("━━╸─"),
     );
     overall.set_message(format!("0/{} files", total_files));
