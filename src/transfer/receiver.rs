@@ -49,10 +49,13 @@ pub async fn listen(
     let tls_config = certs::build_server_config()?;
     let acceptor = tokio_rustls::TlsAcceptor::from(tls_config);
 
-    // Bind TCP listener
-    let listener = TcpListener::bind(format!("0.0.0.0:{}", port))
-        .await
-        .with_context(|| format!("Failed to bind to port {}", port))?;
+    // Bind TCP listener — try dual-stack (IPv6+IPv4) first, fall back to IPv4-only
+    let listener = match TcpListener::bind(format!("[::]:{}", port)).await {
+        Ok(l) => l,
+        Err(_) => TcpListener::bind(format!("0.0.0.0:{}", port))
+            .await
+            .with_context(|| format!("Failed to bind to port {}", port))?,
+    };
 
     let local_fp = certs::local_fingerprint()?;
 
