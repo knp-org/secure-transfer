@@ -180,9 +180,17 @@ async fn handle_connection(
     };
 
     if !authorized {
-        // Unknown peer or scope exceeded — prompt user
-        let decision =
-            ui::prompt_access_grant(&peer_name, &peer_fingerprint, &conn_req.request_type)?;
+        // Unknown peer or scope exceeded — prompt user.
+        // dialoguer blocks the thread, so run on the blocking pool to
+        // avoid starving the tokio async runtime.
+        let decision = {
+            let pn = peer_name.clone();
+            let fp = peer_fingerprint.clone();
+            let rt = conn_req.request_type.clone();
+            tokio::task::spawn_blocking(move || ui::prompt_access_grant(&pn, &fp, &rt))
+                .await
+                .map_err(|e| anyhow::anyhow!("Access prompt task failed: {}", e))??
+        };
 
         if !decision.granted {
             // Log the denied connection
@@ -304,7 +312,10 @@ async fn handle_send(
         info!("Auto-accepting transfer from trusted peer '{}'", peer_name);
         true
     } else {
-        ui::confirm_transfer(&manifest)?
+        let m = manifest.clone();
+        tokio::task::spawn_blocking(move || ui::confirm_transfer(&m))
+            .await
+            .map_err(|e| anyhow::anyhow!("Transfer prompt task failed: {}", e))??
     };
 
     let ack = if accepted {
@@ -741,7 +752,13 @@ async fn handle_text(
 
     // Access has already been authorized by handle_connection's access-control
     // gate, so we only need a lightweight content confirmation here.
-    let accepted = ui::confirm_text_message(&text_msg.sender_hostname, text_msg.content.len())?;
+    let sender = text_msg.sender_hostname.clone();
+    let content_len = text_msg.content.len();
+    let accepted = tokio::task::spawn_blocking(move || {
+        ui::confirm_text_message(&sender, content_len)
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("Text prompt task failed: {}", e))??;
 
     if !accepted {
         info!("Text message from '{}' rejected", text_msg.sender_hostname);
@@ -774,8 +791,12 @@ async fn handle_text(
     };
     protocol::write_frame(&mut tls_stream, &ack).await?;
 
-    // Display the text message
-    ui::print_text_message(&text_msg.sender_hostname, &text_msg.content);
+    // Display the text message (includes a blocking clipboard-copy prompt)
+    let sender_hn = text_msg.sender_hostname.clone();
+    let content = text_msg.content.clone();
+    tokio::task::spawn_blocking(move || ui::print_text_message(&sender_hn, &content))
+        .await
+        .map_err(|e| anyhow::anyhow!("Text display task failed: {}", e))?;
 
     // Log successful text — truncate at char boundary to avoid panics on multi-byte UTF-8
     let preview: String = text_msg.content.chars().take(20).collect();

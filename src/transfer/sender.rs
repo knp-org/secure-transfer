@@ -118,17 +118,24 @@ pub async fn send_files(
     // an exact match when we have one from mDNS discovery.
     let tls_config = certs::build_client_config(expected_fingerprint.clone())?;
     let connector = TlsConnector::from(tls_config);
-    let tcp_stream = TcpStream::connect(addr)
-        .await
-        .with_context(|| format!("Failed to connect to {}", addr))?;
+    let tcp_stream = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        TcpStream::connect(addr),
+    )
+    .await
+    .with_context(|| format!("Connection to {} timed out", addr))?
+    .with_context(|| format!("Failed to connect to {}", addr))?;
 
     let server_name = rustls::pki_types::ServerName::try_from("secure-transfer.local")
         .map_err(|e| anyhow::anyhow!("Invalid server name: {}", e))?;
 
-    let mut tls_stream = connector
-        .connect(server_name, tcp_stream)
-        .await
-        .context("TLS handshake failed")?;
+    let mut tls_stream = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        connector.connect(server_name, tcp_stream),
+    )
+    .await
+    .context("TLS handshake timed out")?
+    .context("TLS handshake failed")?;
 
     ui::finish_spinner_success(&conn_sp, "Quantum-safe TLS 1.3 connection established");
 
@@ -333,17 +340,24 @@ pub async fn send_text(
     // Connect via TLS
     let tls_config = certs::build_client_config(expected_fingerprint.clone())?;
     let connector = TlsConnector::from(tls_config);
-    let tcp_stream = TcpStream::connect(addr)
-        .await
-        .with_context(|| format!("Failed to connect to {}", addr))?;
+    let tcp_stream = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        TcpStream::connect(addr),
+    )
+    .await
+    .with_context(|| format!("Connection to {} timed out", addr))?
+    .with_context(|| format!("Failed to connect to {}", addr))?;
 
     let server_name = rustls::pki_types::ServerName::try_from("secure-transfer.local")
         .map_err(|e| anyhow::anyhow!("Invalid server name: {}", e))?;
 
-    let mut tls_stream = connector
-        .connect(server_name, tcp_stream)
-        .await
-        .context("TLS handshake failed")?;
+    let mut tls_stream = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        connector.connect(server_name, tcp_stream),
+    )
+    .await
+    .context("TLS handshake timed out")?
+    .context("TLS handshake failed")?;
 
     ui::finish_spinner_success(&conn_sp, "Quantum-safe TLS 1.3 connection established");
 

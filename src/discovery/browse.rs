@@ -64,9 +64,10 @@ pub fn browse_devices(timeout: Option<Duration>) -> Result<Vec<DiscoveredDevice>
                         fingerprint,
                     };
 
-                    // mdns-sd may emit multiple resolve events for the same
-                    // service while records settle; only keep one listing.
-                    let key = (device.ip, device.port, device.fingerprint.clone());
+                    // Dedup by (fingerprint, port) — a device with multiple
+                    // network interfaces advertises the same fingerprint on
+                    // each IP; including the IP would list it twice.
+                    let key = (device.fingerprint.clone(), device.port);
                     if seen.insert(key) {
                         debug!("Found device: {}", device);
                         devices.push(device);

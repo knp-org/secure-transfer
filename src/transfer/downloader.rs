@@ -36,17 +36,24 @@ pub async fn download_files(
     // Connect via TLS — enforce fingerprint when available from mDNS.
     let tls_config = certs::build_client_config(expected_fingerprint.clone())?;
     let connector = TlsConnector::from(tls_config);
-    let tcp_stream = TcpStream::connect(addr)
-        .await
-        .with_context(|| format!("Failed to connect to {}", addr))?;
+    let tcp_stream = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        TcpStream::connect(addr),
+    )
+    .await
+    .with_context(|| format!("Connection to {} timed out", addr))?
+    .with_context(|| format!("Failed to connect to {}", addr))?;
 
     let server_name = rustls::pki_types::ServerName::try_from("secure-transfer.local")
         .map_err(|e| anyhow::anyhow!("Invalid server name: {}", e))?;
 
-    let mut tls_stream = connector
-        .connect(server_name, tcp_stream)
-        .await
-        .context("TLS handshake failed")?;
+    let mut tls_stream = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        connector.connect(server_name, tcp_stream),
+    )
+    .await
+    .context("TLS handshake timed out")?
+    .context("TLS handshake failed")?;
 
     info!("Quantum-safe TLS connection established to {}", addr);
 
@@ -181,7 +188,13 @@ pub async fn download_files(
         save_dir.display()
     );
 
-    let tcp_stream = TcpStream::connect(addr).await?;
+    let tcp_stream = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        TcpStream::connect(addr),
+    )
+    .await
+    .with_context(|| format!("Connection to {} timed out", addr))?
+    .with_context(|| format!("Failed to connect to {}", addr))?;
     let server_name = rustls::pki_types::ServerName::try_from("secure-transfer.local")
         .map_err(|e| anyhow::anyhow!("Invalid server name: {}", e))?;
 
@@ -191,7 +204,13 @@ pub async fn download_files(
         Some(verified_fingerprint)
     };
     let connector = TlsConnector::from(certs::build_client_config(pinned_fp)?);
-    let mut tls_stream = connector.connect(server_name, tcp_stream).await?;
+    let mut tls_stream = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        connector.connect(server_name, tcp_stream),
+    )
+    .await
+    .context("TLS handshake timed out")?
+    .context("TLS handshake failed")?;
 
     // Send download request with fingerprint
     let conn_req = ConnectionRequest {
