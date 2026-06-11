@@ -38,7 +38,11 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+
+      - name: Install cargo-deb
+        if: contains(matrix.target, 'linux')
+        uses: taiki-e/install-action@cargo-deb
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
@@ -58,7 +62,15 @@ jobs:
 
           echo "ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
 
+          if [[ "${{ matrix.target }}" == *"linux"* ]]; then
+            cargo deb --target ${{ matrix.target }} --no-build
+            DEB_FILE=$(ls target/${{ matrix.target }}/debian/*.deb)
+            echo "DEB_FILE=${DEB_FILE}" >> $GITHUB_ENV
+          fi
+
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.ARCHIVE }}
+          files: |
+            ${{ env.ARCHIVE }}
+            ${{ env.DEB_FILE }}
