@@ -236,6 +236,19 @@ impl TransferProgress {
         self.overall.set_position(bytes);
     }
 
+    /// Mark transfer as cancelled by user
+    pub fn cancel(&self) {
+        self.status_pb
+            .set_style(ProgressStyle::with_template("  {msg}").expect("valid progress template"));
+        self.status_pb.finish_with_message(format!(
+            "{}  {}",
+            style("[x]").yellow().bold(),
+            style("Transfer cancelled").yellow()
+        ));
+        self.file_pb.finish_and_clear();
+        self.overall.finish_and_clear();
+    }
+
     /// Finish all progress bars with a summary
     pub fn finish(&self, files_completed: u64, total_bytes: u64, elapsed_secs: f64) {
         let speed = if elapsed_secs > 0.0 {

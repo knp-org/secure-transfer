@@ -10,6 +10,7 @@ use tracing::{debug, info, warn};
 use crate::config::{self, AccessDuration, AccessScope, TrustedPeer};
 use crate::crypto::certs;
 use crate::history::{self, TransactionRecord};
+use crate::shutdown::{self, Shutdown};
 use crate::transfer::protocol::{
     self, Ack, AckStatus, BrowseRequest, BrowseResponse, CHUNK_SIZE, ConnectionRequest,
     DownloadRequest, FileFooter, FileHeader, RequestType, TransferManifest,
@@ -29,7 +30,10 @@ pub async fn download_files(
     save_dir: PathBuf,
     expected_fingerprint: Option<String>,
     peer_name: Option<String>,
+    shutdown: Shutdown,
 ) -> Result<()> {
+    shutdown.spawn_ctrlc_handler();
+    let shutdown_rx = shutdown.subscribe();
     // Ensure save directory exists
     tokio::fs::create_dir_all(&save_dir).await?;
 
@@ -304,8 +308,27 @@ pub async fn download_files(
 
         while remaining > 0 {
             let to_read = std::cmp::min(remaining as usize, CHUNK_SIZE);
-            let n = tokio::io::AsyncReadExt::read(&mut tls_stream, &mut buf[..to_read]).await?;
+            let n = match shutdown::read_cancellable(
+                &mut tls_stream,
+                &mut buf[..to_read],
+                shutdown_rx.clone(),
+            )
+            .await
+            {
+                Ok(n) => n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                    let _ = tokio::fs::remove_file(&dest_path).await;
+                    overall_pb.finish_with_message("[x] Download cancelled");
+                    let _ = tls_stream.shutdown().await;
+                    anyhow::bail!("Download cancelled by user (Ctrl+C)");
+                }
+                Err(e) => {
+                    let _ = tokio::fs::remove_file(&dest_path).await;
+                    return Err(e.into());
+                }
+            };
             if n == 0 {
+                let _ = tokio::fs::remove_file(&dest_path).await;
                 anyhow::bail!(
                     "Connection closed during download of '{}'",
                     header.relative_path

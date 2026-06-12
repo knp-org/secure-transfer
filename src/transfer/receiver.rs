@@ -3,15 +3,18 @@ use sha2::Digest;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
+use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 use walkdir::WalkDir;
 
 use crate::config::{self, AccessDuration, AccessScope, TrustedPeer};
 use crate::crypto::certs;
 use crate::history::{self, TransactionRecord};
+use crate::shutdown::{self, Shutdown};
 use crate::transfer::protocol::{
     self, Ack, AckStatus, BrowseEntry, BrowseRequest, BrowseResponse, CHUNK_SIZE,
     ConnectionRequest, DownloadRequest, FileHeader, RequestType, TransferManifest, TransferSummary,
@@ -25,7 +28,10 @@ pub async fn listen(
     save_dir: PathBuf,
     share_dirs: Vec<PathBuf>,
     unrestricted: bool,
+    shutdown: Shutdown,
 ) -> Result<()> {
+    shutdown.spawn_ctrlc_handler();
+    let shutdown_rx = shutdown.subscribe();
     // Ensure save directory exists
     tokio::fs::create_dir_all(&save_dir)
         .await
@@ -90,36 +96,76 @@ pub async fn listen(
     let session_trusted: Arc<Mutex<HashMap<String, AccessScope>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
+    let mut connection_tasks = JoinSet::new();
+
     loop {
-        let (tcp_stream, peer_addr) = listener.accept().await?;
-        info!("Incoming connection from {}", peer_addr);
+        tokio::select! {
+            biased;
+            () = shutdown::wait(shutdown_rx.clone()) => {
+                info!("Shutting down receiver...");
+                break;
+            }
+            accept_result = listener.accept() => {
+                let (tcp_stream, peer_addr) = accept_result?;
+                info!("Incoming connection from {}", peer_addr);
 
-        let acceptor = acceptor.clone();
-        let save_dir = save_dir.clone();
-        let share_dirs = share_dirs.clone();
-        let session_trusted = session_trusted.clone();
+                let acceptor = acceptor.clone();
+                let save_dir = save_dir.clone();
+                let share_dirs = share_dirs.clone();
+                let session_trusted = session_trusted.clone();
+                let conn_shutdown = shutdown.subscribe();
 
-        tokio::spawn(async move {
-            match acceptor.accept(tcp_stream).await {
-                Ok(tls_stream) => {
-                    if let Err(e) = handle_connection(
-                        tls_stream,
-                        &save_dir,
-                        &share_dirs,
-                        unrestricted,
-                        session_trusted,
-                    )
-                    .await
-                    {
-                        warn!("Connection from {} failed: {}", peer_addr, e);
+                connection_tasks.spawn(async move {
+                    match acceptor.accept(tcp_stream).await {
+                        Ok(tls_stream) => {
+                            if let Err(e) = handle_connection(
+                                tls_stream,
+                                &save_dir,
+                                &share_dirs,
+                                unrestricted,
+                                session_trusted,
+                                conn_shutdown,
+                            )
+                            .await
+                            {
+                                if !shutdown::is_cancelled(&e) {
+                                    warn!("Connection from {} failed: {}", peer_addr, e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!("TLS handshake with {} failed: {}", peer_addr, e);
+                        }
                     }
-                }
-                Err(e) => {
-                    warn!("TLS handshake with {} failed: {}", peer_addr, e);
+                });
+            }
+        }
+    }
+
+    drop(listener);
+
+    if !connection_tasks.is_empty() {
+        info!(
+            "Waiting for {} active connection(s) to finish...",
+            connection_tasks.len()
+        );
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            tokio::select! {
+                biased;
+                _ = connection_tasks.join_next(), if !connection_tasks.is_empty() => {}
+                () = tokio::time::sleep_until(deadline) => {
+                    connection_tasks.abort_all();
+                    break;
                 }
             }
-        });
+            if connection_tasks.is_empty() {
+                break;
+            }
+        }
     }
+
+    Ok(())
 }
 
 /// Route a connection based on the initial request type, enforcing access control
@@ -129,6 +175,7 @@ async fn handle_connection(
     share_dirs: &[PathBuf],
     unrestricted: bool,
     session_trusted: Arc<Mutex<HashMap<String, AccessScope>>>,
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     // Read the connection request to determine what the client wants
     let conn_req: ConnectionRequest = protocol::read_frame(&mut tls_stream).await?;
@@ -264,7 +311,9 @@ async fn handle_connection(
     };
 
     match conn_req.request_type {
-        RequestType::Send => handle_send(tls_stream, save_dir, &peer_name, &peer_fingerprint).await,
+        RequestType::Send => {
+            handle_send(tls_stream, save_dir, &peer_name, &peer_fingerprint, shutdown_rx).await
+        }
         RequestType::Browse => handle_browse(tls_stream, share_dirs, effective_unrestricted).await,
         RequestType::Download => {
             handle_download(
@@ -273,6 +322,7 @@ async fn handle_connection(
                 effective_unrestricted,
                 &peer_name,
                 &peer_fingerprint,
+                shutdown_rx,
             )
             .await
         }
@@ -286,6 +336,7 @@ async fn handle_send(
     save_dir: &Path,
     peer_name: &str,
     peer_fingerprint: &str,
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     // Read manifest
     let manifest: TransferManifest = protocol::read_frame(&mut tls_stream).await?;
@@ -405,8 +456,27 @@ async fn handle_send(
 
         while remaining > 0 {
             let to_read = std::cmp::min(remaining as usize, CHUNK_SIZE);
-            let n = tokio::io::AsyncReadExt::read(&mut tls_stream, &mut buf[..to_read]).await?;
+            let n = match shutdown::read_cancellable(
+                &mut tls_stream,
+                &mut buf[..to_read],
+                shutdown_rx.clone(),
+            )
+            .await
+            {
+                Ok(n) => n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                    let _ = tokio::fs::remove_file(&dest_path).await;
+                    overall_pb.finish_with_message("[x] Transfer cancelled");
+                    let _ = tls_stream.shutdown().await;
+                    anyhow::bail!("Transfer cancelled by user (Ctrl+C)");
+                }
+                Err(e) => {
+                    let _ = tokio::fs::remove_file(&dest_path).await;
+                    return Err(e.into());
+                }
+            };
             if n == 0 {
+                let _ = tokio::fs::remove_file(&dest_path).await;
                 anyhow::bail!(
                     "Connection closed during transfer of '{}'",
                     header.relative_path
@@ -578,6 +648,7 @@ async fn handle_download(
     unrestricted: bool,
     peer_name: &str,
     peer_fingerprint: &str,
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     // Read the download request
     let download_req: DownloadRequest = protocol::read_frame(&mut tls_stream).await?;
@@ -698,11 +769,29 @@ async fn handle_download(
 
             while remaining > 0 {
                 let to_read = std::cmp::min(remaining as usize, CHUNK_SIZE);
-                let n = tokio::io::AsyncReadExt::read(&mut file, &mut buf[..to_read]).await?;
+                let n = match shutdown::read_cancellable(&mut file, &mut buf[..to_read], shutdown_rx.clone())
+                    .await
+                {
+                    Ok(n) => n,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                        let _ = tls_stream.shutdown().await;
+                        anyhow::bail!("Download cancelled by user (Ctrl+C)");
+                    }
+                    Err(e) => return Err(e.into()),
+                };
                 if n == 0 {
                     break;
                 }
-                tls_stream.write_all(&buf[..n]).await?;
+                match shutdown::write_cancellable(&mut tls_stream, &buf[..n], shutdown_rx.clone())
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                        let _ = tls_stream.shutdown().await;
+                        anyhow::bail!("Download cancelled by user (Ctrl+C)");
+                    }
+                    Err(e) => return Err(e.into()),
+                }
                 hasher.update(&buf[..n]);
                 remaining -= n as u64;
             }

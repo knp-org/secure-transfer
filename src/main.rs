@@ -3,6 +3,7 @@ mod config;
 mod crypto;
 mod discovery;
 mod history;
+mod shutdown;
 mod transfer;
 mod ui;
 
@@ -51,7 +52,14 @@ async fn main() -> Result<()> {
             let mdns = discovery::advertise::advertise(port)?;
 
             // Start listening for transfers and browse requests
-            let result = transfer::receiver::listen(port, save_dir, share, unrestricted).await;
+            let result = transfer::receiver::listen(
+                port,
+                save_dir,
+                share,
+                unrestricted,
+                shutdown::Shutdown::new(),
+            )
+            .await;
 
             // Clean up mDNS on exit
             discovery::advertise::stop(mdns);
@@ -100,7 +108,14 @@ async fn main() -> Result<()> {
                 }
             };
 
-            transfer::sender::send_files(&paths, addr, expected_fingerprint, peer_name).await
+            transfer::sender::send_files(
+                &paths,
+                addr,
+                expected_fingerprint,
+                peer_name,
+                shutdown::Shutdown::new(),
+            )
+            .await
         }
 
         Commands::Text { message, to } => {
@@ -136,7 +151,14 @@ async fn main() -> Result<()> {
                 }
             };
 
-            transfer::sender::send_text(message, addr, expected_fingerprint, peer_name).await
+            transfer::sender::send_text(
+                message,
+                addr,
+                expected_fingerprint,
+                peer_name,
+                shutdown::Shutdown::new(),
+            )
+            .await
         }
 
         Commands::Download {
@@ -187,6 +209,7 @@ async fn main() -> Result<()> {
                 save_dir,
                 expected_fingerprint,
                 peer_name,
+                shutdown::Shutdown::new(),
             )
             .await
         }

@@ -12,6 +12,7 @@ use walkdir::WalkDir;
 use crate::config::{self, AccessDuration, AccessScope, TrustedPeer};
 use crate::crypto::certs;
 use crate::history::{self, TransactionRecord};
+use crate::shutdown::{self, Shutdown};
 use crate::transfer::protocol::{
     self, Ack, AckStatus, CHUNK_SIZE, ConnectionRequest, FileFooter, FileHeader, RequestType, TransferManifest,
     TransferSummary, TextMessage,
@@ -99,7 +100,10 @@ pub async fn send_files(
     addr: SocketAddr,
     expected_fingerprint: Option<String>,
     peer_name: Option<String>,
+    shutdown: Shutdown,
 ) -> Result<()> {
+    shutdown.spawn_ctrlc_handler();
+    let shutdown_rx = shutdown.subscribe();
     // Collect all entries
     let entries = collect_entries(paths)?;
     let total_files = entries.iter().filter(|e| !e.is_dir).count() as u64;
@@ -235,6 +239,12 @@ pub async fn send_files(
 
     // Send each entry
     for entry in &entries {
+        if shutdown.is_triggered() {
+            progress.cancel();
+            let _ = tls_stream.shutdown().await;
+            anyhow::bail!("Transfer cancelled by user (Ctrl+C)");
+        }
+
         let checksum = String::new();
 
         // Send file header
@@ -258,11 +268,23 @@ pub async fn send_files(
 
             while remaining > 0 {
                 let to_read = std::cmp::min(remaining as usize, CHUNK_SIZE);
-                let n = tokio::io::AsyncReadExt::read(&mut file, &mut buf[..to_read]).await?;
+                let n = io_or_cancel(
+                    shutdown::read_cancellable(&mut file, &mut buf[..to_read], shutdown_rx.clone())
+                        .await,
+                    &progress,
+                    &mut tls_stream,
+                )
+                .await?;
                 if n == 0 {
                     break;
                 }
-                tls_stream.write_all(&buf[..n]).await?;
+                io_or_cancel(
+                    shutdown::write_cancellable(&mut tls_stream, &buf[..n], shutdown_rx.clone())
+                        .await,
+                    &progress,
+                    &mut tls_stream,
+                )
+                .await?;
                 hasher.update(&buf[..n]);
                 remaining -= n as u64;
                 bytes_sent += n as u64;
@@ -319,6 +341,22 @@ pub async fn send_files(
     Ok(())
 }
 
+async fn io_or_cancel<T>(
+    result: std::io::Result<T>,
+    progress: &ui::TransferProgress,
+    tls_stream: &mut tokio_rustls::client::TlsStream<tokio::net::TcpStream>,
+) -> Result<T> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+            progress.cancel();
+            let _ = tls_stream.shutdown().await;
+            anyhow::bail!("Transfer cancelled by user (Ctrl+C)");
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// Truncate a string to at most `max_chars` characters (safe for multi-byte UTF-8).
 fn truncate_text(s: &str, max_chars: usize) -> &str {
     match s.char_indices().nth(max_chars) {
@@ -333,7 +371,9 @@ pub async fn send_text(
     addr: SocketAddr,
     expected_fingerprint: Option<String>,
     peer_name: Option<String>,
+    shutdown: Shutdown,
 ) -> Result<()> {
+    shutdown.spawn_ctrlc_handler();
     // Show connecting animation
     let conn_sp = ui::show_connecting_spinner(&addr.to_string());
 
