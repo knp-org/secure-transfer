@@ -42,7 +42,7 @@ jobs:
 
       - name: Install cargo-deb
         if: contains(matrix.target, 'linux')
-        uses: taiki-e/install-action@cargo-deb
+        run: cargo install cargo-deb
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
